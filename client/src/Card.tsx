@@ -1,9 +1,11 @@
 import { cardImageName, cardLabel, CardId } from '../../shared/src/cards';
 
 /** svg-cards (htdebeer, LGPL) — every card is a symbol in one sprite, top-left at (0,0) */
-const SPRITE = '/cards/svg-cards.svg';
+const SPRITE = '/cards/svg-cards.svg?v=2';
 export const CARD_W = 169.075;
 export const CARD_H = 244.64;
+/** The printable card inside each sprite cell (the sprite leaves a 1.25 margin) — crop to it so our own rounded edge and shadow define the card */
+const FACE_BOX = '1.25 1.25 166.575 242.14';
 
 /** Fetch the sprite once up front so the first deal never flashes blank */
 export function preloadCards() {
@@ -13,7 +15,7 @@ export function preloadCards() {
 export function CardFace({ id, className = '' }: { id: CardId; className?: string }) {
   return (
     <div className={`card ${className}`} aria-label={cardLabel(id)} role="img">
-      <svg viewBox={`0 0 ${CARD_W} ${CARD_H}`} preserveAspectRatio="none">
+      <svg viewBox={FACE_BOX} preserveAspectRatio="none">
         <use href={`${SPRITE}#${cardImageName(id)}`} />
       </svg>
     </div>

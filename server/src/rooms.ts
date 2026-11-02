@@ -20,11 +20,15 @@ export interface Room {
   lastEvent: string | null;
   botTimer: NodeJS.Timeout | null;
   updatedAt: number;
+  /** when the current round was dealt */
+  dealtAt: number;
 }
 
 const BOT_NAMES = ['小黑', '阿财', '老K', '雀神', '赌圣'];
 /** A disconnected human is auto-played after this long on their turn */
 export const AUTOPLAY_AFTER_MS = 20_000;
+/** Clients animate the deal for ~5 s; nobody automated moves before it finishes */
+export const DEAL_HOLD_MS = 6_000;
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -58,6 +62,7 @@ export class RoomManager {
       lastEvent: null,
       botTimer: null,
       updatedAt: Date.now(),
+      dealtAt: 0,
     };
     this.rooms.set(room.code, room);
     this.byPlayer.set(playerId, room.code);
@@ -151,6 +156,7 @@ export class RoomManager {
     if (room.game) throw new GameError('游戏已经开始了');
     if (room.players.length < 2) throw new GameError('至少需要 2 名玩家（可以加机器人）');
     room.game = newGame(room.players.map((p) => ({ id: p.id, name: p.name, isBot: p.isBot })));
+    room.dealtAt = Date.now();
     room.lastEvent = describe(room, room.game.log);
     this.touch(room);
   }
@@ -174,6 +180,7 @@ export class RoomManager {
     if (!room?.game) throw new GameError('没有进行中的游戏');
     if (room.game.phase !== 'roundOver') return;
     room.game = nextRound(room.game);
+    room.dealtAt = Date.now();
     room.lastEvent = describe(room, room.game.log);
     this.touch(room);
   }
@@ -189,6 +196,8 @@ export class RoomManager {
     if (p.isBot) delay = 650 + Math.random() * 600;
     else if (p.disconnectedAt) delay = Math.max(500, AUTOPLAY_AFTER_MS - (Date.now() - p.disconnectedAt));
     if (delay === null) return;
+    // let everyone's deal animation finish before the first automated move
+    delay = Math.max(delay, room.dealtAt + DEAL_HOLD_MS - Date.now());
     const seq = g.seq;
     room.botTimer = setTimeout(() => {
       room.botTimer = null;

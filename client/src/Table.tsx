@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, animate } from 'motion/react';
 import type { RoomView, PlayerView } from '../../shared/src/protocol';
-import { CardId, cardLabel, rankOf, suitOf } from '../../shared/src/cards';
+import { CardId, rankOf, suitOf } from '../../shared/src/cards';
 import { identify, canBeat, playableCombos, COMBO_NAMES, isBomb, Combo } from '../../shared/src/combos';
 import { CardFace, CardBack } from './Card';
 import { Hand } from './Hand';
-import { TrickCards, DealLayer, ChipsLayer } from './Trick';
+import { TrickCards, DealSequence, ChipsLayer } from './Trick';
+import { DealPlan, makeDealPlan, countAt } from './deal';
 import { rememberHandRects } from './fly';
 import { api, toast } from './net';
 import { sfx } from './sound';
@@ -14,8 +15,6 @@ import { useSettings, setSettings, springs, speedFactor, Speed } from './setting
 type Pos = 'bottom' | 'left' | 'right' | 'top';
 type Springs = ReturnType<typeof springs>;
 type SortMode = 'rank' | 'suit';
-/** how long the deal animation runs (17 cards × 60 ms + settle) */
-const DEAL_S = 17 * 0.06 + 0.25;
 
 const posOf = (seat: number, me: number, n: number): Pos => {
   const rel = (seat - me + n) % n;
@@ -40,12 +39,42 @@ export function Table({ room }: { room: RoomView }) {
   const [sortMode, setSortMode] = useState<SortMode | 'custom'>('rank');
   const [hintIdx, setHintIdx] = useState(0);
   const [ghost, setGhost] = useState<{ seat: number; combo: Combo } | null>(null);
-  const [flipShow, setFlipShow] = useState(false);
-  const [dealFx, setDealFx] = useState(0);
   const [menu, setMenu] = useState(false);
   const [sending, setSending] = useState(false);
-  const dealtAt = useRef(Date.now());
+  const [, setTick] = useState(0);
   const prevRef = useRef<typeof g | null>(null);
+
+  // ---- the opening deal: decided synchronously on the first render of each round ----
+  const planRef = useRef<DealPlan | null>(null);
+  const seenRound = useRef<number | null>(null);
+  if (seenRound.current !== g.round) {
+    const fresh = g.phase === 'playing' && !g.lastPlay && g.yourHand.length >= 17 && g.flipped !== null && g.flippedTo !== null;
+    planRef.current = fresh && !sp.off ? makeDealPlan(g.round, n, g.flipped!, g.flippedTo!, k) : null;
+    seenRound.current = g.round;
+  }
+  const plan = planRef.current;
+  const elapsed = plan ? (performance.now() - plan.startedAt) / 1000 : Infinity;
+  const dealing = !!plan && elapsed < plan.ready;
+
+  // re-render ~10×/s during the deal so opponent counters tick up and input unlocks on time
+  useEffect(() => {
+    if (!plan) return;
+    const id = window.setInterval(() => {
+      setTick((t) => t + 1);
+      if ((performance.now() - plan.startedAt) / 1000 > plan.ready + 0.1) clearInterval(id);
+    }, 100);
+    return () => clearInterval(id);
+  }, [plan]);
+
+  // hand order: on a new round start from rank order immediately (no flash of last round's cards)
+  const orderRound = useRef(g.round);
+  const shownOrder = (() => {
+    if (orderRound.current !== g.round) return sortBy(g.yourHand, 'rank');
+    const inHand = new Set(g.yourHand);
+    const kept = order.filter((c) => inHand.has(c));
+    const missing = g.yourHand.filter((c) => !kept.includes(c));
+    return missing.length || kept.length !== order.length ? [...kept, ...sortBy(missing, 'rank')] : order;
+  })();
 
   // ---- react to server updates ----
   useEffect(() => {
@@ -53,19 +82,15 @@ export function Table({ room }: { room: RoomView }) {
     prevRef.current = g;
     if (!prev && (g.phase !== 'playing' || g.lastPlay || g.yourHand.length < 17)) {
       // joined / reconnected mid-round: no deal animation
-      dealtAt.current = 0;
       if (g.lastPlay) setGhost(g.lastPlay);
       return;
     }
     if (!prev || g.round !== prev.round) {
-      dealtAt.current = Date.now();
+      orderRound.current = g.round;
       setSelected(new Set());
       setGhost(null);
       setOrder(sortBy(g.yourHand, 'rank'));
       setSortMode('rank');
-      setFlipShow(true);
-      setDealFx((x) => x + 1);
-      sfx.deal();
       return;
     }
     if (g.lastPlay && g.lastPlay !== prev.lastPlay && g.seq !== prev.seq) {
@@ -80,20 +105,10 @@ export function Table({ room }: { room: RoomView }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [g.seq]);
 
-  useEffect(() => {
-    if (!flipShow) return;
-    const t = setTimeout(() => setFlipShow(false), (2000 + DEAL_S * 1000) * Math.max(k, 0.5));
-    return () => clearTimeout(t);
-  }, [flipShow, k]);
-
   // keep my custom order when cards leave the hand
   useEffect(() => {
-    setOrder((o) => {
-      const inHand = new Set(g.yourHand);
-      const kept = o.filter((c) => inHand.has(c));
-      const missing = g.yourHand.filter((c) => !kept.includes(c));
-      return missing.length || kept.length !== o.length ? [...kept, ...sortBy(missing, 'rank')] : o;
-    });
+    orderRound.current = g.round;
+    if (shownOrder !== order) setOrder(shownOrder);
     setSelected((s) => {
       const inHand = new Set(g.yourHand);
       const next = new Set([...s].filter((c) => inHand.has(c)));
@@ -108,7 +123,7 @@ export function Table({ room }: { room: RoomView }) {
   };
 
   const prevCombo = g.lastPlay?.combo ?? null;
-  const myTurn = g.phase === 'playing' && g.turn === me;
+  const myTurn = !dealing && g.phase === 'playing' && g.turn === me;
   const selCombo = selected.size ? identify([...selected]) : null;
   const selOk = !!selCombo && canBeat(selCombo, prevCombo);
 
@@ -193,9 +208,17 @@ export function Table({ room }: { room: RoomView }) {
 
       {/* ---------- arena ---------- */}
       <section className="arena">
-        <div className="oval" aria-hidden />
+        <GlassTable />
         {opponents.map((p) => (
-          <Seat key={p.id} p={p} pos={posOf(p.seat, me, n)} active={g.phase === 'playing' && g.turn === p.seat} passed={g.passed[p.seat]} sp={sp} />
+          <Seat
+            key={p.id}
+            p={p}
+            count={plan && dealing ? countAt(plan, p.seat, elapsed, p.cardCount) : p.cardCount}
+            pos={posOf(p.seat, me, n)}
+            active={!dealing && g.phase === 'playing' && g.turn === p.seat}
+            passed={g.passed[p.seat]}
+            sp={sp}
+          />
         ))}
 
         <div className="trick">
@@ -212,12 +235,10 @@ export function Table({ room }: { room: RoomView }) {
               />
             )}
           </AnimatePresence>
-          {!shown && !flipShow && g.phase === 'playing' && (
+          {!shown && !dealing && g.phase === 'playing' && (
             <div className="trick-empty">{myTurn ? '你先出，出什么都行' : `等 ${turnName} 先出`}</div>
           )}
-          <AnimatePresence>
-            {flipShow && !shown && g.flipped !== null && <FlipReveal card={g.flipped} to={room.players[g.flippedTo ?? 0]?.name} sp={sp} wait={DEAL_S * k} />}
-          </AnimatePresence>
+
         </div>
 
         <div className="event" aria-live="polite">{g.lastEvent}</div>
@@ -247,14 +268,15 @@ export function Table({ room }: { room: RoomView }) {
 
       <div className="hand-wrap">
         <Hand
-          order={order}
+          order={shownOrder}
           setOrder={(o) => { setOrder(o); setSortMode('custom'); }}
           selected={selected}
           setSelected={setSelected}
           round={g.round}
           sp={sp}
-          k={k}
-          dealtAt={dealtAt.current}
+          deal={plan}
+          me={me}
+          locked={dealing}
           active={myTurn}
           idle={!sp.off}
         />
@@ -267,8 +289,8 @@ export function Table({ room }: { room: RoomView }) {
         </div>
       </div>
 
-      {dealFx > 0 && (
-        <DealLayer key={`deal-${g.round}-${dealFx}`} seats={opponents.map((p) => p.seat)} perSeat={17} speed={speed} />
+      {plan && dealing && (
+        <DealSequence key={`deal-${plan.round}`} plan={plan} me={me} names={room.players.map((p) => p.name)} />
       )}
       {over && g.winner !== null && g.lastDeltas && (
         <ChipsLayer
@@ -286,9 +308,22 @@ export function Table({ room }: { room: RoomView }) {
 
 // ---------------------------------------------------------------------------
 
-function Seat({ p, pos, active, passed, sp }: { p: PlayerView; pos: Pos; active: boolean; passed: boolean; sp: Springs }) {
-  const backs = Math.min(p.cardCount, 6);
-  const warn = p.cardCount > 0 && p.cardCount <= 3;
+/** A clear glass coffee table seen from slightly above: floor shadow and brass legs under a frosted top with a green slab edge and glare. */
+function GlassTable() {
+  return (
+    <div className="glass-table" aria-hidden>
+      <div className="gt-shadow" />
+      <div className="gt-legs"><i /><i /><i /><i /></div>
+      <div className="gt-top">
+        <div className="gt-glare" />
+      </div>
+    </div>
+  );
+}
+
+function Seat({ p, count, pos, active, passed, sp }: { p: PlayerView; count: number; pos: Pos; active: boolean; passed: boolean; sp: Springs }) {
+  const backs = Math.min(count, 6);
+  const warn = count > 0 && count <= 3;
   return (
     <div className={`seat seat-${pos} ${active ? 'active' : ''}`}>
       <div className="seat-backs" aria-hidden>
@@ -306,7 +341,7 @@ function Seat({ p, pos, active, passed, sp }: { p: PlayerView; pos: Pos; active:
             {!p.connected && <em className="off">离线</em>}
           </div>
           <div className="seat-meta">
-            <span className={`count num ${warn ? 'warn' : ''}`}>{p.cardCount}</span>
+            <span className={`count num ${warn ? 'warn' : ''}`}>{count}</span>
             <span className="unit">张</span>
             <span className="seat-score num">{p.score > 0 ? `+${p.score}` : p.score}</span>
           </div>
@@ -320,25 +355,6 @@ function Seat({ p, pos, active, passed, sp }: { p: PlayerView; pos: Pos; active:
         )}
       </AnimatePresence>
     </div>
-  );
-}
-
-function FlipReveal({ card, to, sp, wait }: { card: CardId; to?: string; sp: Springs; wait: number }) {
-  useEffect(() => {
-    if (sp.off) return;
-    const t = setTimeout(() => sfx.flip(), (wait + 0.4) * 1000);
-    return () => clearTimeout(t);
-  }, [sp.off, wait]);
-  return (
-    <motion.div className="flip-reveal" initial={{ opacity: 0, scale: 0.7 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6, y: 80 }} transition={{ ...sp.card, delay: wait }}>
-      <div className="flip-3d">
-        <motion.div className="flip-inner" initial={{ rotateY: 180 }} animate={{ rotateY: 0 }} transition={{ ...sp.flip, delay: sp.off ? 0 : wait + 0.4 }}>
-          <div className="flip-face"><CardFace id={card} /></div>
-          <div className="flip-face backside"><CardBack /></div>
-        </motion.div>
-      </div>
-      <div className="flip-text">翻牌 {cardLabel(card)} → {to}</div>
-    </motion.div>
   );
 }
 

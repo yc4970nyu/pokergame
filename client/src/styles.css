@@ -20,7 +20,7 @@
   --muted: rgba(23, 24, 28, 0.55);
   --pos: #1f8a54;
   --neg: #c62f3b;
-  --card-ratio: 169.075 / 244.64;
+  --card-ratio: 166.575 / 242.14;
   /* contact shadow + ambient shadow */
   --shadow-card: 0 0 0 0.5px rgba(23, 24, 28, 0.12), 0 1px 2px rgba(23, 24, 28, 0.18), 0 8px 18px -8px rgba(23, 24, 28, 0.3);
   --shadow-lift: 0 0 0 0.5px rgba(23, 24, 28, 0.12), 0 4px 8px rgba(23, 24, 28, 0.14), 0 24px 36px -14px rgba(23, 24, 28, 0.42);
@@ -51,15 +51,17 @@ input { font: inherit; }
 .num { font-family: var(--font-num); font-variant-numeric: tabular-nums; font-feature-settings: 'tnum'; letter-spacing: 0.02em; }
 .gold-text { color: var(--gold-ink); }
 
-/* ---------- room ---------- */
+/* ---------- room: a pale limestone floor, lit from the upper left ---------- */
 .felt {
   position: fixed;
   inset: 0;
   overflow: hidden;
   background:
-    radial-gradient(ellipse 60% 45% at 18% 12%, rgba(240, 215, 123, 0.28), transparent 70%),
-    radial-gradient(ellipse 55% 45% at 85% 88%, rgba(150, 170, 200, 0.28), transparent 70%),
-    linear-gradient(180deg, #f6f7f9 0%, var(--bg) 55%, var(--bg-deep) 100%);
+    radial-gradient(ellipse 70% 55% at 15% 0%, rgba(255, 248, 230, 0.75), transparent 70%),
+    radial-gradient(ellipse 60% 50% at 95% 100%, rgba(170, 182, 200, 0.28), transparent 70%),
+    linear-gradient(90deg, rgba(23, 24, 28, 0.045) 1px, transparent 1px) 0 0 / 180px 180px,
+    linear-gradient(0deg, rgba(23, 24, 28, 0.045) 1px, transparent 1px) 0 0 / 180px 180px,
+    linear-gradient(135deg, #f3f1ec 0%, #e9e6e0 50%, #e2dfd8 100%);
 }
 
 /* ---------- cards ---------- */
@@ -67,13 +69,22 @@ input { font: inherit; }
   position: relative;
   width: 100%;
   aspect-ratio: var(--card-ratio);
-  border-radius: 8% / 5.5%;
+  border-radius: 7% / 4.8%;
   box-shadow: var(--shadow-card);
   overflow: hidden;
   background: var(--card);
+  /* keeps the clipped corners crisp while the card is moving */
+  isolation: isolate;
+  -webkit-mask-image: -webkit-radial-gradient(white, black);
   transition: box-shadow 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
-.card svg { display: block; width: 100%; height: 100%; pointer-events: none; }
+.card svg { display: block; width: 100%; height: 100%; pointer-events: none; shape-rendering: geometricPrecision; }
+/* a whisper of paper: soft inner edge + faint top sheen instead of a printed outline */
+.card:not(.back)::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none;
+  box-shadow: inset 0 0 0 1px rgba(23, 24, 28, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), transparent 30%, transparent 70%, rgba(23, 24, 28, 0.025));
+}
 .card.back { background: #1a2232; }
 .card.tiny { width: 30px; box-shadow: 0 0 0 0.5px rgba(23, 24, 28, 0.15), 0 1px 2px rgba(23, 24, 28, 0.2); }
 
@@ -225,24 +236,61 @@ input { font: inherit; }
 
 .arena { position: relative; flex: 1; min-height: 0; }
 
-/* the table itself: a frosted, translucent white glass top with a hairline gold rail */
-.oval {
+/* the table: a clear glass coffee-table top, seen slightly from above */
+.glass-table {
   position: absolute;
-  left: 5%; right: 5%; top: 7%; bottom: 6%;
-  border-radius: 50%;
-  background:
-    radial-gradient(ellipse at 50% 30%, rgba(255, 255, 255, 0.75), rgba(255, 255, 255, 0.38) 70%),
-    rgba(255, 255, 255, 0.25);
-  backdrop-filter: blur(22px) saturate(1.3);
-  -webkit-backdrop-filter: blur(22px) saturate(1.3);
-  border: 1px solid rgba(255, 255, 255, 0.9);
+  left: 6%; right: 6%; top: 6%; bottom: 8%;
+  --r: min(150px, 26vmin);
+  transform: perspective(1600px) rotateX(14deg);
+  transform-origin: 50% 60%;
+  pointer-events: none;
+}
+.glass-table > div { position: absolute; inset: 0; border-radius: var(--r); }
+/* soft contact shadow on the floor — you see it through the glass */
+.gt-shadow {
+  transform: translate(8px, 30px) scale(0.96);
+  background: rgba(40, 46, 56, 0.14);
+  filter: blur(24px);
+}
+/* four brass legs, seen through the top (blurred and dimmed by the glass) */
+.gt-legs { border-radius: 0 !important; }
+.gt-legs i {
+  position: absolute; width: 9%; aspect-ratio: 1; max-width: 46px; border-radius: 26%;
+  background: radial-gradient(circle at 35% 30%, #e4cf8c, #a8862f 55%, #6e5719);
+  box-shadow: 6px 14px 18px rgba(40, 32, 10, 0.35);
+  filter: blur(1.2px); opacity: 0.55;
+}
+.gt-legs i:nth-child(1) { left: 7%; top: 9%; }
+.gt-legs i:nth-child(2) { right: 7%; top: 9%; }
+.gt-legs i:nth-child(3) { left: 7%; bottom: 9%; }
+.gt-legs i:nth-child(4) { right: 7%; bottom: 9%; }
+/* the top: clear glass with a little frost. Its thickness is drawn as stacked offset
+   shadows, which only paint outside the top — so the green edge shows at the rim, not through the middle */
+.gt-top {
+  overflow: hidden;
+  background: linear-gradient(160deg, rgba(255, 255, 255, 0.42), rgba(255, 255, 255, 0.12) 45%, rgba(255, 255, 255, 0.24));
+  backdrop-filter: blur(3px) saturate(1.1) brightness(1.04);
+  -webkit-backdrop-filter: blur(3px) saturate(1.1) brightness(1.04);
+  border: 1px solid rgba(255, 255, 255, 0.95);
   box-shadow:
-    inset 0 0 0 1px rgba(212, 175, 55, 0.35),
-    inset 0 2px 0 rgba(255, 255, 255, 0.9),
-    inset 0 -18px 40px rgba(23, 24, 28, 0.04),
-    0 0 0 10px rgba(255, 255, 255, 0.28),
-    0 0 0 11px rgba(23, 24, 28, 0.05),
-    0 30px 60px -20px rgba(23, 24, 28, 0.25);
+    inset 0 0 0 1px rgba(255, 255, 255, 0.7),
+    inset 0 0 0 3px rgba(178, 216, 206, 0.45),    /* bevel: the edge seen through the top */
+    inset 0 2px 0 #fff,
+    inset 0 -8px 20px rgba(120, 165, 155, 0.08),
+    0 2px 0 0 #dcefe9,
+    0 4px 0 0 #c6e3da,
+    0 6px 0 0 #b1d6cb,
+    0 8px 0 0 #9cc9bc,
+    0 9px 0 0 rgba(96, 146, 133, 0.75),
+    0 10px 1px 0 rgba(60, 100, 90, 0.35);
+}
+/* reflections: two diagonal streaks and a soft hotspot near the light */
+.gt-glare {
+  position: absolute; inset: -30%;
+  background:
+    radial-gradient(ellipse 30% 20% at 30% 28%, rgba(255, 255, 255, 0.55), transparent 70%),
+    linear-gradient(118deg, transparent 34%, rgba(255, 255, 255, 0.5) 38.5%, transparent 42%,
+      transparent 47%, rgba(255, 255, 255, 0.28) 49%, transparent 51.5%);
 }
 
 /* opponents */
@@ -297,10 +345,6 @@ input { font: inherit; }
 .flip-face { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
 .flip-face.backside { position: absolute; inset: 0; transform: rotateY(180deg); }
 
-.flip-reveal { position: absolute; display: flex; flex-direction: column; align-items: center; gap: 10px; z-index: 20; }
-.flip-3d { width: 96px; perspective: 800px; }
-.flip-reveal .card { box-shadow: 0 0 0 2px var(--gold), 0 14px 34px rgba(23, 24, 28, 0.3); }
-.flip-text { font-size: 14px; padding: 4px 12px; border-radius: 10px; background: var(--glass-strong); color: var(--gold-ink); box-shadow: 0 2px 8px rgba(23, 24, 28, 0.1); }
 
 /* ---------- my bar ---------- */
 .me-bar { position: relative; z-index: 15; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 12px 0; }
@@ -321,6 +365,7 @@ input { font: inherit; }
 
 /* ---------- hand ---------- */
 .hand { position: relative; width: 100%; touch-action: none; flex: none; }
+.hand.locked { pointer-events: none; }
 .hand-card { position: absolute; left: 0; top: 0; cursor: grab; transform-origin: 50% 110%; outline: none; will-change: transform; }
 .hand.dragging .hand-card { cursor: grabbing; }
 .tilt {
@@ -346,7 +391,16 @@ input { font: inherit; }
 
 /* ---------- effects layer (deal, chips) ---------- */
 .fx-layer { position: fixed; inset: 0; z-index: 40; pointer-events: none; }
-.deck, .deal-card { position: absolute; width: 48px; margin: -35px 0 0 -24px; }
+.deck, .deal-card, .drawn { position: absolute; width: 54px; margin: -39px 0 0 -27px; }
+.drawn { z-index: 2; }
+.flip-3d-wrap { perspective: 700px; }
+.drawn .card { box-shadow: 0 0 0 1.5px var(--gold), 0 12px 26px -6px rgba(23, 24, 28, 0.4); }
+.drawn-label {
+  position: absolute; width: 200px; margin: 62px 0 0 -100px; text-align: center; font-size: 13px;
+}
+.drawn-label::before { content: none; }
+.drawn-label { color: var(--gold-ink); }
+.drawn-label { text-shadow: 0 1px 0 rgba(255, 255, 255, 0.8); }
 .deck-card { position: absolute; inset: 0; }
 .deal-card .card, .deck-card .card { box-shadow: 0 2px 6px rgba(23, 24, 28, 0.3); }
 .chip-token {
@@ -387,7 +441,7 @@ input { font: inherit; }
   .topbar { padding-top: 4px; }
   .trick { --tw: 56px; top: 47%; }
   .event { display: none; }
-  .oval { top: 2%; bottom: 2%; left: 14%; right: 14%; }
+  .glass-table { top: 3%; bottom: 3%; left: 14%; right: 14%; --r: 70px; }
 }
 @media (min-width: 900px), (max-height: 480px) {
   .hand-wrap { flex-direction: row; align-items: flex-end; }
@@ -400,7 +454,7 @@ input { font: inherit; }
   .seat-right { right: 4vw; top: 16%; }
   .mini-back { width: 44px; }
   .seat-backs { height: 64px; width: 100px; }
-  .oval { left: 12%; right: 12%; top: 5%; bottom: 4%; }
+  .glass-table { left: 17%; right: 17%; top: 5%; bottom: 7%; }
   .actions { flex-direction: row; }
 }
 @media (prefers-reduced-motion: reduce) {

@@ -61,10 +61,12 @@ export const sfx = {
   win: () => { if (!on()) return; [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.4, 0.1, i * 0.09)); },
   lose: () => { if (!on()) return; [392, 330].forEach((f, i) => tone(f, 0.35, 0.07, i * 0.12, 'triangle')); },
   tick: () => on() && tone(1400, 0.03, 0.04),
-  /** soft landing on the felt */
+  /** soft landing on the table */
   thunk: () => { if (!on()) return; noise(0.07, 380, 0.5); tone(110, 0.08, 0.06); },
   flip: () => on() && noise(0.05, 4200, 0.14),
   /** ceramic chip clink: two short detuned partials */
   chip: (delay = 0) => { if (!on()) return; tone(2350 + Math.random() * 300, 0.06, 0.05, delay); tone(3900 + Math.random() * 400, 0.04, 0.03, delay + 0.005); },
   pickup: () => on() && noise(0.03, 2600, 0.1),
+  /** one card snapped off the deck — short and quiet, it plays ~50 times in 3 s */
+  dealCard: () => on() && noise(0.035, 2900 + Math.random() * 600, 0.07),
 };

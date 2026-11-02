@@ -3,7 +3,9 @@ import { motion, useMotionValue, animate, AnimatePresence } from 'motion/react';
 import type { CardId } from '../../shared/src/cards';
 import { COMBO_NAMES, isBomb, Combo } from '../../shared/src/combos';
 import { CardFace, CardBack } from './Card';
-import { flyFrom, seatRect, trickCenter } from './fly';
+import { flyFrom, seatRect, deckPoint, flipPoint } from './fly';
+import { DealPlan, dealTime } from './deal';
+import { cardLabel } from '../../shared/src/cards';
 import { sfx } from './sound';
 import type { Speed } from './settings';
 
@@ -118,34 +120,106 @@ export function TrickCards({
   );
 }
 
-/** Backs flying from the deck to every opponent while my own hand deals in. */
-export function DealLayer({ seats, perSeat, speed }: { seats: number[]; perSeat: number; speed: Speed }) {
-  if (speed === 'off') return null;
-  const c = trickCenter();
-  const f = speed === 'fast' ? 2 : 1;
+/**
+ * The opening sequence (see deal.ts): deck in the middle, the random card drawn and turned
+ * face-up beside it, then cards dealt round-robin to every opponent seat, then the drawn card
+ * flies to its owner. My own cards are animated by <Hand> on the same timeline.
+ */
+export function DealSequence({ plan, me, names }: { plan: DealPlan; me: number; names: string[] }) {
+  const d = deckPoint();
+  const fp = flipPoint();
+  const opponents = plan.seats.filter((s) => s !== me);
+
+  // one soft card sound per card leaving the deck, plus the draw and the hand-over
+  useEffect(() => {
+    const ts: number[] = [];
+    const at = (sec: number, fn: () => void) => ts.push(window.setTimeout(fn, sec * 1000));
+    at(0.25, () => sfx.flip());
+    for (const seat of plan.seats) for (let j = 0; j < plan.perSeat; j++) at(dealTime(plan, seat, j), () => sfx.dealCard());
+    at(plan.give, () => sfx.thunk());
+    return () => ts.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const toOwner = (() => {
+    if (plan.flippedTo === me) return null; // <Hand> takes over the card
+    const r = seatRect(plan.flippedTo);
+    return r ? { x: r.left + r.width / 2 - fp.x, y: r.top + r.height / 2 - fp.y } : null;
+  })();
+
   return (
     <div className="fx-layer" aria-hidden>
-      <motion.div className="deck" style={{ left: c.x, top: c.y }} initial={{ opacity: 1 }} animate={{ opacity: 0 }} transition={{ delay: (perSeat * 0.06) / f + 0.2, duration: 0.3 }}>
-        {[0, 1, 2].map((i) => <div key={i} className="deck-card" style={{ transform: `translate(${-i * 1.5}px, ${-i * 1.5}px)` }}><CardBack /></div>)}
+      {/* the deck */}
+      <motion.div
+        className="deck"
+        style={{ left: d.x, top: d.y }}
+        initial={{ opacity: 0, scale: 0.8, y: 20 }}
+        animate={{ opacity: [0, 1, 1, 0], scale: [0.8, 1, 1, 0.9], y: [20, 0, 0, 0] }}
+        transition={{ duration: plan.dealEnd + 0.2, times: [0, 0.12 / (plan.dealEnd + 0.2) * 2, plan.dealEnd / (plan.dealEnd + 0.2), 1] }}
+      >
+        {[0, 1, 2, 3, 4].map((i) => (
+          <div key={i} className="deck-card" style={{ transform: `translate(${-i * 0.8}px, ${-i * 1.2}px)` }}><CardBack /></div>
+        ))}
       </motion.div>
-      {seats.flatMap((seat) => {
+
+      {/* the drawn card: lifts off the deck, flips face-up, waits in the middle, then goes to its owner */}
+      <motion.div
+        className="drawn"
+        style={{ left: fp.x, top: fp.y }}
+        initial={{ x: d.x - fp.x, y: d.y - fp.y - 6, rotate: -4, scale: 1, opacity: 0 }}
+        animate={{
+          x: [d.x - fp.x, 0, 0, toOwner ? toOwner.x : 0],
+          y: [d.y - fp.y - 6, -10, 0, toOwner ? toOwner.y : 0],
+          rotate: [-4, 3, 0, toOwner ? 10 : 0],
+          scale: [1, 1.25, 1.25, toOwner ? 0.6 : 1.25],
+          // into my hand: vanish the instant the hand's copy starts from this spot
+          opacity: toOwner ? [1, 1, 1, 0] : [1, 1, 1, 0],
+        }}
+        transition={{
+          duration: toOwner ? plan.give + 0.5 : plan.give + 0.02,
+          times: toOwner
+            ? [0, 0.6 / (plan.give + 0.5), plan.give / (plan.give + 0.5), 1]
+            : [0, 0.6 / (plan.give + 0.02), plan.give / (plan.give + 0.02), 1],
+          ease: 'easeInOut',
+        }}
+      >
+        <div className="flip-3d-wrap">
+          <motion.div className="flip-inner" initial={{ rotateY: 180 }} animate={{ rotateY: 0 }} transition={{ type: 'spring', stiffness: 260, damping: 24, delay: 0.3 }}>
+            <div className="flip-face"><CardFace id={plan.flipped} /></div>
+            <div className="flip-face backside"><CardBack /></div>
+          </motion.div>
+        </div>
+      </motion.div>
+      <motion.div
+        className="drawn-label"
+        style={{ left: fp.x, top: fp.y }}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: [0, 1, 1, 0], y: [10, 0, 0, 0] }}
+        transition={{ duration: plan.give + 0.3, times: [0, 0.9 / (plan.give + 0.3), plan.give / (plan.give + 0.3), 1] }}
+      >
+        翻牌 {cardLabel(plan.flipped)} → {names[plan.flippedTo]}
+      </motion.div>
+
+      {/* cards dealt to each opponent, one at a time, round-robin */}
+      {opponents.flatMap((seat) => {
         const r = seatRect(seat);
         if (!r) return [];
-        const tx = r.left + r.width / 2 - c.x;
-        const ty = r.top + r.height / 2 - c.y;
-        return Array.from({ length: Math.min(perSeat, 17) }, (_, i) => (
+        const tx = r.left + r.width / 2 - d.x;
+        const ty = r.top + r.height / 2 - d.y;
+        return Array.from({ length: plan.perSeat }, (_, j) => (
           <motion.div
-            key={`${seat}-${i}`}
+            key={`${seat}-${j}`}
             className="deal-card"
-            style={{ left: c.x, top: c.y }}
-            initial={{ x: 0, y: 0, rotate: 0, opacity: 0 }}
-            animate={{ x: tx, y: ty, rotate: (i % 2 ? 1 : -1) * (8 + i), opacity: [0, 1, 1, 0] }}
+            style={{ left: d.x, top: d.y }}
+            initial={{ x: 0, y: 0, rotate: 0, opacity: 0, scale: 1 }}
+            animate={{ x: tx, y: ty, rotate: 180 + (j % 2 ? 9 : -9), opacity: [1, 1, 0], scale: 0.7 }}
             transition={{
-              delay: (i * 0.06) / f,
-              x: { type: 'spring', stiffness: 170 * f, damping: 20 },
-              y: { type: 'spring', stiffness: 170 * f, damping: 20 },
-              rotate: { type: 'spring', stiffness: 200, damping: 14 },
-              opacity: { duration: 0.5 / f, times: [0, 0.1, 0.75, 1] },
+              delay: dealTime(plan, seat, j),
+              x: { type: 'spring', stiffness: 240, damping: 26 },
+              y: { type: 'spring', stiffness: 240, damping: 26 },
+              rotate: { type: 'spring', stiffness: 200, damping: 20 },
+              scale: { duration: 0.35 },
+              opacity: { duration: 0.45, times: [0, 0.7, 1] },
             }}
           >
             <CardBack />

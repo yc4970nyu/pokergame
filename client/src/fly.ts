@@ -20,6 +20,21 @@ export function seatRect(seat: number): DOMRect | null {
   return document.querySelector<HTMLElement>(`[data-seat="${seat}"]`)?.getBoundingClientRect() ?? null;
 }
 
+/** Size of the cards in the deck / deal animation (screen px) */
+export const DECK_W = 54;
+
+/** Where the deck sits during the deal (screen coords): a bit left of centre */
+export function deckPoint() {
+  const c = trickCenter();
+  return { x: c.x - DECK_W * 0.8, y: c.y };
+}
+
+/** Where the drawn card is shown during the deal: a bit right of centre */
+export function flipPoint() {
+  const c = trickCenter();
+  return { x: c.x + DECK_W * 0.8, y: c.y };
+}
+
 export function trickCenter(): { x: number; y: number } {
   const r = document.querySelector<HTMLElement>('.trick')?.getBoundingClientRect();
   return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : { x: innerWidth / 2, y: innerHeight * 0.45 };

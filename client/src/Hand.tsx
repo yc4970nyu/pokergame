@@ -1,9 +1,10 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { CardId, cardLabel } from '../../shared/src/cards';
-import { CardFace } from './Card';
+import { CardFace, CardBack } from './Card';
 import { sfx } from './sound';
-import { trickCenter } from './fly';
+import { deckPoint, flipPoint, DECK_W } from './fly';
+import { DealPlan, dealTime } from './deal';
 import type { springs } from './settings';
 
 type Springs = ReturnType<typeof springs>;
@@ -49,7 +50,7 @@ type Gesture =
   | { mode: 'drag'; id: CardId; dx: number; dy: number };
 
 export function Hand({
-  order, setOrder, selected, setSelected, round, sp, k, dealtAt, active, idle,
+  order, setOrder, selected, setSelected, round, sp, active, idle, deal, me, locked,
 }: {
   order: CardId[];
   setOrder: (o: CardId[]) => void;
@@ -57,10 +58,13 @@ export function Hand({
   setSelected: (s: Set<CardId>) => void;
   round: number;
   sp: Springs;
-  k: number;
-  dealtAt: number;
   active: boolean;
   idle: boolean;
+  /** the opening deal timeline for this round, if it's being animated */
+  deal: DealPlan | null;
+  me: number;
+  /** no input while the deal is running */
+  locked: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 360, h: 640 });
@@ -78,15 +82,17 @@ export function Hand({
   }, []);
 
   const { slots, cw, ch, height } = computeSlots(order.length, box.w, box.h);
-  const dealing = Date.now() - dealtAt < 1800 * Math.max(k, 0.01);
-
-  // where the deck sits, relative to this container — cards fly from there on the deal
-  const deckFrom = (() => {
-    const r = ref.current?.getBoundingClientRect();
-    if (!r) return { x: box.w / 2 - cw / 2, y: -box.h * 0.4 };
-    const c = trickCenter();
-    return { x: c.x - r.left - cw / 2, y: c.y - r.top - ch / 2 };
-  })();
+  const plan = deal && deal.round === round ? deal : null;
+  const elapsed = plan ? (performance.now() - plan.startedAt) / 1000 : Infinity;
+  const dealing = !!plan && elapsed < plan.ready;
+  const box0 = ref.current?.getBoundingClientRect();
+  const toLocal = (p: { x: number; y: number }) =>
+    box0 ? { x: p.x - box0.left - cw / 2, y: p.y - box0.top - ch / 2 } : { x: box.w / 2 - cw / 2, y: -box.h * 0.4 };
+  const deckAt = toLocal(deckPoint());
+  const flipAt = toLocal(flipPoint());
+  // dealing order for my non-drawn cards: left to right as they'll sit in the hand
+  const dealIndex = new Map<CardId, number>();
+  if (plan) order.filter((c) => !(c === plan.flipped && plan.flippedTo === me)).forEach((c, j) => dealIndex.set(c, j));
 
   // ---------------- gestures ----------------
   const local = (e: { clientX: number; clientY: number }) => {
@@ -129,6 +135,7 @@ export function Hand({
   };
 
   const onDown = (e: React.PointerEvent) => {
+    if (locked) return;
     const id = idAt(e.clientX, e.clientY);
     if (id === null) return;
     ref.current!.setPointerCapture(e.pointerId);
@@ -198,7 +205,7 @@ export function Hand({
   return (
     <div
       ref={ref}
-      className={`hand ${active ? 'active' : ''} ${drag ? 'dragging' : ''} ${idle ? 'idle' : ''}`}
+      className={`hand ${active ? 'active' : ''} ${drag ? 'dragging' : ''} ${idle && !dealing ? 'idle' : ''} ${locked ? 'locked' : ''}`}
       style={{ height, ['--cw' as string]: `${cw}px` }}
       onPointerDown={onDown}
       onPointerMove={onMove}
@@ -214,13 +221,23 @@ export function Hand({
         const target = isDragged
           ? { x: drag.x, y: drag.y, rotate: 0, scale: 1.1 }
           : { x: s.x, y: s.y - (sel ? 24 : 0), rotate: s.r, scale: sel ? 1.08 : 1 };
+        const isDrawn = !!plan && c === plan.flipped && plan.flippedTo === me;
+        const leaveAt = plan ? (isDrawn ? plan.give : dealTime(plan, me, dealIndex.get(c) ?? 0)) : 0;
         const transition = isDragged
           ? { x: { duration: 0 }, y: { duration: 0 }, rotate: sp.snap, scale: sp.snap }
           : dealing && !sp.off
-            ? { ...sp.deal, delay: i * 0.06 * k }
+            ? {
+                x: { ...sp.deal, delay: leaveAt },
+                y: { ...sp.deal, delay: leaveAt },
+                rotate: { ...sp.deal, delay: leaveAt },
+                scale: { ...sp.deal, delay: leaveAt },
+                opacity: { duration: 0.01, delay: leaveAt },
+              }
             : drag
               ? sp.push
               : sp.snap;
+        const from = isDrawn ? flipAt : deckAt;
+        const fromScale = plan ? ((isDrawn ? 1.25 : 1) * DECK_W) / cw : 0.75;
         return (
           <motion.div
             key={`r${round}-c${c}`}
@@ -258,14 +275,28 @@ export function Hand({
               el?.style.setProperty('--rx', '0deg');
               el?.style.setProperty('--ry', '0deg');
             }}
-            initial={{ x: deckFrom.x, y: deckFrom.y, rotate: (Math.random() - 0.5) * 50, scale: 0.75, opacity: 0 }}
+            initial={{ x: from.x, y: from.y, rotate: plan && !isDrawn ? 180 + (Math.random() - 0.5) * 20 : 0, scale: fromScale, opacity: plan ? 0 : 1 }}
             animate={{ ...target, opacity: 1 }}
             whileHover={isDragged || drag ? undefined : { y: s.y - (sel ? 28 : 12), scale: sel ? 1.1 : 1.05 }}
             transition={transition}
           >
             <div className="tilt">
               <div className="breathe" style={{ animationDelay: `${(i * 0.37) % 4}s` }}>
-                <CardFace id={c} />
+                {plan ? (
+                  // dealt face-down; the whole hand turns over together once the deal is done
+                  <motion.div
+                    className="flip-inner"
+                    initial={{ rotateY: isDrawn ? 0 : 180 }}
+                    animate={{ rotateY: 0 }}
+                    transition={{ ...sp.flip, delay: plan.reveal + i * 0.025 }}
+                    style={{ transformPerspective: 800 }}
+                  >
+                    <div className="flip-face"><CardFace id={c} /></div>
+                    <div className="flip-face backside"><CardBack /></div>
+                  </motion.div>
+                ) : (
+                  <CardFace id={c} />
+                )}
               </div>
             </div>
           </motion.div>
