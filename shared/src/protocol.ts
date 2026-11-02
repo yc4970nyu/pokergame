@@ -1,5 +1,6 @@
 import type { CardId } from './cards';
 import type { Combo } from './combos';
+import type { Settlement } from './game';
 
 /** What one client is allowed to see about a room. Other players' hands are hidden. */
 export interface RoomView {
@@ -31,6 +32,8 @@ export interface GameView {
   flippedTo: number | null;
   winner: number | null;
   lastDeltas: number[] | null;
+  /** How each loser's payment was computed (round over only) */
+  settlement: Settlement | null;
   /** Remaining hands, revealed only when the round is over */
   revealedHands: CardId[][] | null;
   seq: number;

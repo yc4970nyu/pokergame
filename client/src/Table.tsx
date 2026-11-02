@@ -3,6 +3,7 @@ import { AnimatePresence, motion, animate } from 'motion/react';
 import type { RoomView, PlayerView } from '../../shared/src/protocol';
 import { CardId, rankOf, suitOf } from '../../shared/src/cards';
 import { identify, canBeat, playableCombos, COMBO_NAMES, isBomb, Combo } from '../../shared/src/combos';
+import type { Payment } from '../../shared/src/game';
 import { CardFace, CardBack } from './Card';
 import { Hand } from './Hand';
 import { TrickCards, DealSequence, ChipsLayer } from './Trick';
@@ -176,7 +177,7 @@ export function Table({ room }: { room: RoomView }) {
   const opponents = room.players.filter((p) => p.seat !== me);
   const meP = room.players[me];
   const over = g.phase === 'roundOver';
-  const bigWin = over && (g.lastDeltas?.[g.winner!] ?? 0) >= 10;
+  const bigWin = over && ((g.lastDeltas?.[g.winner!] ?? 0) >= 20 || !!g.settlement?.tailTwo);
 
   return (
     <motion.div
@@ -296,7 +297,7 @@ export function Table({ room }: { room: RoomView }) {
         <ChipsLayer
           key={`chips-${g.round}`}
           to={g.winner}
-          from={room.players.filter((p) => p.seat !== g.winner).map((p) => ({ seat: p.seat, n: -(g.lastDeltas![p.seat]) || g.revealedHands?.[p.seat]?.length || 0 }))}
+          from={(g.settlement?.payments ?? []).map((p) => ({ seat: p.seat, n: p.amount }))}
           speed={speed}
         />
       )}
@@ -381,16 +382,33 @@ function CountUp({ to, speed, delay }: { to: number; speed: Speed; delay: number
   return <span ref={ref} className="num">0</span>;
 }
 
+/** "11 张 ×2 超过10张 ×2 剩一张2 ×2 尾二" */
+function Formula({ p }: { p: Payment }) {
+  const parts: string[] = [];
+  if (p.over10) parts.push('超过10张 ×2');
+  if (p.twos) parts.push(`剩${p.twos}张2 ×${2 ** p.twos}`);
+  if (p.tailTwo) parts.push('尾二 ×2');
+  return (
+    <div className="r-formula">
+      <span className="num">{p.cards}</span> 张
+      {parts.map((t) => <em key={t}>{t}</em>)}
+      {p.multiplier > 1 && <> = <b className="num">{p.amount}</b></>}
+    </div>
+  );
+}
+
 function RoundOver({ room, sp, speed, k }: { room: RoomView; sp: Springs; speed: Speed; k: number }) {
   const g = room.game!;
   const winner = room.players[g.winner!];
   const iWon = g.winner === g.yourSeat;
+  const st = g.settlement;
   // let the winning play land and the chips fly before the sheet slides up
   const delay = 1.5 * k;
   return (
     <motion.div className="overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ delay, duration: 0.25 }}>
       <motion.div className="result panel" initial={{ y: 60, scale: 0.94, opacity: 0 }} animate={{ y: 0, scale: 1, opacity: 1 }} transition={{ ...sp.card, delay }}>
         <h2 className="result-title">{iWon ? '你赢了这局' : `${winner?.name} 先出完了`}</h2>
+        {st?.tailTwo && <div className="tail-two">尾二！全场翻倍</div>}
         <ul className="result-list">
           {room.players
             .slice()
@@ -398,6 +416,7 @@ function RoundOver({ room, sp, speed, k }: { room: RoomView; sp: Springs; speed:
             .map((p) => {
               const d = g.lastDeltas?.[p.seat] ?? 0;
               const left = g.revealedHands?.[p.seat] ?? [];
+              const pay = st?.payments.find((x) => x.seat === p.seat);
               return (
                 <li key={p.id} className={p.seat === g.winner ? 'win' : ''}>
                   <div className="r-head">
@@ -405,6 +424,7 @@ function RoundOver({ room, sp, speed, k }: { room: RoomView; sp: Springs; speed:
                     <span className={`r-delta ${d > 0 ? 'pos' : d < 0 ? 'neg' : ''}`}><CountUp to={d} speed={speed} delay={delay + 0.2} /></span>
                     <span className="r-total">总分 <b className="num">{p.score}</b></span>
                   </div>
+                  {pay && <Formula p={pay} />}
                   {left.length > 0 && (
                     <div className="r-cards">{left.map((c) => <CardFace key={c} id={c} className="tiny" />)}</div>
                   )}

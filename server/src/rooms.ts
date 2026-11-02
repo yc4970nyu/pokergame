@@ -239,6 +239,7 @@ export class RoomManager {
             flippedTo: g.flippedTo,
             winner: g.winner,
             lastDeltas: g.lastDeltas,
+            settlement: g.lastSettlement,
             revealedHands: g.phase === 'roundOver' ? g.seats.map((s) => s.hand) : null,
             seq: g.seq,
             lastEvent: room.lastEvent,
@@ -296,7 +297,7 @@ function describe(room: Room, log: LogEvent[]): string | null {
     if (e.kind === 'play') parts.push(`${nm(e.seat)} 出了${COMBO_NAMES[e.combo.type]}`);
     if (e.kind === 'pass') parts.push(`${nm(e.seat)} 不要`);
     if (e.kind === 'newTrick') parts.push(`${nm(e.leader)} 获得出牌权`);
-    if (e.kind === 'roundOver') parts.push(`${nm(e.winner)} 出完了！+${e.deltas[e.winner]} 分`);
+    if (e.kind === 'roundOver') parts.push(`${nm(e.winner)} 出完了！+${e.deltas[e.winner]}`);
   }
   return parts.join('，') || null;
 }

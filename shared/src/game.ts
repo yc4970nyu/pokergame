@@ -1,4 +1,4 @@
-import { CardId, fullDeck, shuffle, sortCards } from './cards';
+import { CardId, fullDeck, shuffle, sortCards, rankOf } from './cards';
 import { Combo, canBeat, identify, COMBO_NAMES } from './combos';
 
 export interface GameConfig {
@@ -9,6 +9,48 @@ export interface GameConfig {
 }
 
 export const DEFAULT_CONFIG: GameConfig = { handSize: 17, losersLosePoints: true };
+
+/** How one loser's payment was worked out, for the result screen */
+export interface Payment {
+  seat: number;
+  cards: number; // cards left in hand
+  over10: boolean; // more than 10 left → ×2
+  twos: number; // 2s left in hand → ×2 each
+  tailTwo: boolean; // winner went out on a 2 or a pair of 2s → ×2 for everyone
+  multiplier: number;
+  amount: number; // cards × multiplier
+}
+
+export interface Settlement {
+  winner: number;
+  tailTwo: boolean;
+  payments: Payment[];
+  total: number;
+}
+
+const RANK_TWO = 12;
+
+/**
+ * 算钱：
+ *  - 每个输家基础 = 手里剩的张数
+ *  - 剩超过 10 张：×2
+ *  - 手里每剩一张 2：再 ×2（一张 ×2，两张 ×4 …）
+ *  - 尾二：赢家最后出的是单张 2 或一对 2 → 所有人再 ×2
+ */
+export function settle(hands: CardId[][], winner: number, finalCombo: Combo): Settlement {
+  const tailTwo =
+    (finalCombo.type === 'single' || finalCombo.type === 'pair') && finalCombo.cards.every((c) => rankOf(c) === RANK_TWO);
+  const payments: Payment[] = [];
+  hands.forEach((hand, seat) => {
+    if (seat === winner) return;
+    const cards = hand.length;
+    const over10 = cards > 10;
+    const twos = hand.filter((c) => rankOf(c) === RANK_TWO).length;
+    const multiplier = (over10 ? 2 : 1) * 2 ** twos * (tailTwo ? 2 : 1);
+    payments.push({ seat, cards, over10, twos, tailTwo, multiplier, amount: cards * multiplier });
+  });
+  return { winner, tailTwo, payments, total: payments.reduce((a, p) => a + p.amount, 0) };
+}
 
 export interface Seat {
   id: string;
@@ -44,6 +86,7 @@ export interface GameState {
   flippedTo: number | null;
   winner: number | null;
   lastDeltas: number[] | null;
+  lastSettlement: Settlement | null;
   /** Monotonic counter; bumps on every change so clients can animate */
   seq: number;
   log: LogEvent[];
@@ -69,6 +112,7 @@ export function newGame(
     flippedTo: null,
     winner: null,
     lastDeltas: null,
+    lastSettlement: null,
     seq: 0,
     log: [],
   };
@@ -113,6 +157,7 @@ export function deal(prev: GameState, rand: () => number = Math.random): GameSta
     flippedTo: lowestSeat,
     winner: null,
     lastDeltas: null,
+    lastSettlement: null,
     seq: prev.seq + 1,
     log: [{ kind: 'deal', flipped, flippedTo: lowestSeat, leader: lowestSeat }],
   };
@@ -153,15 +198,10 @@ export function play(state: GameState, seat: number, cards: CardId[]): GameState
 
   // First to empty their hand wins the round
   if (seats[seat].hand.length === 0) {
-    const n = seats.length;
-    const deltas = Array(n).fill(0);
-    let total = 0;
-    seats.forEach((s, i) => {
-      if (i === seat) return;
-      total += s.hand.length;
-      if (state.config.losersLosePoints) deltas[i] = -s.hand.length;
-    });
-    deltas[seat] = total;
+    const settlement = settle(seats.map((s) => s.hand), seat, combo);
+    const deltas: number[] = Array(seats.length).fill(0);
+    for (const p of settlement.payments) if (state.config.losersLosePoints) deltas[p.seat] = -p.amount;
+    deltas[seat] = settlement.total;
     log.push({ kind: 'roundOver', winner: seat, deltas });
     return {
       ...state,
@@ -170,6 +210,7 @@ export function play(state: GameState, seat: number, cards: CardId[]): GameState
       lastPlay: { seat, combo },
       winner: seat,
       lastDeltas: deltas,
+      lastSettlement: settlement,
       seq: state.seq + 1,
       log,
     };

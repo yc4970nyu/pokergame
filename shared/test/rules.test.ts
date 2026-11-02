@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   CardId, identify, canBeat, newGame, play, pass, chooseBotMove, enumerateCombos, playableCombos,
-  GameState, rankOf, nextRound,
+  GameState, rankOf, nextRound, settle,
 } from '../src';
 
 // helper: card from "3c", "10s", "Ah", "2d"
@@ -133,8 +133,8 @@ describe('round flow', () => {
 
   it('scoring: winner gets the sum of the others\' remaining cards', () => {
     let g = mk();
-    g = { ...g, turn: 0, seats: g.seats.map((s, i) => ({ ...s, hand: [cs('2s'), cs('3c 4c 5c 6c 8d'), cs('3d 4d 5d 6d 8h')][i] })) };
-    g = play(g, 0, cs('2s'));
+    g = { ...g, turn: 0, seats: g.seats.map((s, i) => ({ ...s, hand: [cs('As'), cs('3c 4c 5c 6c 8d'), cs('3d 4d 5d 6d 8h')][i] })) };
+    g = play(g, 0, cs('As'));
     expect(g.phase).toBe('roundOver');
     expect(g.winner).toBe(0);
     expect(g.lastDeltas).toEqual([10, -5, -5]);
@@ -142,6 +142,47 @@ describe('round flow', () => {
     g = nextRound(g);
     expect(g.phase).toBe('playing');
     expect(g.round).toBe(2);
+  });
+});
+
+describe('money (算钱)', () => {
+  const win = (s: string) => identify(cs(s))!;
+  const pay = (hands: string[], final = '3c') => settle([[], ...hands.map(cs)], 0, win(final));
+
+  it('base: cards left', () => {
+    expect(pay(['3d 4d 5d 6d 7d']).payments[0].amount).toBe(5);
+  });
+  it('more than 10 cards: ×2 (11 cards → 22); exactly 10 is not doubled', () => {
+    expect(pay(['3d 4d 5d 6d 7d 8d 9d 10d Jd Qd Kd']).payments[0].amount).toBe(22);
+    expect(pay(['3d 4d 5d 6d 7d 8d 9d 10d Jd Qd']).payments[0].amount).toBe(10);
+  });
+  it('11 cards with one 2: ×2 ×2 → 44', () => {
+    expect(pay(['3d 4d 5d 6d 7d 8d 9d 10d Jd Qd 2d']).payments[0].amount).toBe(44);
+  });
+  it('6 cards with one 2 → ×2 = 12; with two 2s → ×4 = 24', () => {
+    expect(pay(['3d 4d 5d 6d 7d 2d']).payments[0].amount).toBe(12);
+    expect(pay(['3d 4d 5d 6d 2h 2d']).payments[0].amount).toBe(24);
+  });
+  it('尾二: winner goes out on a single 2 or a pair of 2s → everyone ×2', () => {
+    const single = pay(['3d 4d 5d', '3h 4h 5h 6h 2c'], '2s');
+    expect(single.tailTwo).toBe(true);
+    expect(single.payments.map((p) => p.amount)).toEqual([6, 20]);
+    expect(single.total).toBe(26);
+    const pair = pay(['3d 4d 5d'], '2h 2s');
+    expect(pair.tailTwo).toBe(true);
+    expect(pair.payments[0].amount).toBe(6);
+  });
+  it('a straight or full house that contains a 2 is not 尾二', () => {
+    expect(pay(['3d 4d 5d'], '2c 3c 4c 5c 6h').tailTwo).toBe(false);
+    expect(pay(['3d 4d 5d'], '2c 2d 2h 3c 3s').tailTwo).toBe(false);
+  });
+  it('game applies it: zero-sum deltas', () => {
+    let g = newGame([{ id: 'a', name: 'A', isBot: false }, { id: 'b', name: 'B', isBot: false }, { id: 'c', name: 'C', isBot: false }]);
+    g = { ...g, turn: 0, seats: g.seats.map((s, i) => ({ ...s, hand: [cs('2s'), cs('3c 4c 5c 6c 2d'), cs('3d 4d')][i] })) };
+    g = play(g, 0, cs('2s'));
+    // B: 5 cards ×2 (one 2) ×2 (尾二) = 20 ; C: 2 ×2 (尾二) = 4
+    expect(g.lastDeltas).toEqual([24, -20, -4]);
+    expect(g.lastSettlement!.tailTwo).toBe(true);
   });
 });
 

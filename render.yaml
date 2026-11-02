@@ -1,0 +1,13 @@
+# Render Blueprint — one web service that serves the game page and the Socket.IO server.
+# Render dashboard → New → Blueprint → pick this repo.
+services:
+  - type: web
+    name: dalaoer
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
