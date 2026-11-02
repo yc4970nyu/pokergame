@@ -28,11 +28,22 @@ export const speedFactor = (s: Speed) => (s === 'normal' ? 1 : s === 'fast' ? 0.
 
 /** Spring presets scaled by the speed setting */
 export const springs = (s: Speed) => {
-  if (s === 'off') return { card: { duration: 0 }, lift: { duration: 0 }, land: { duration: 0 } };
+  if (s === 'off') {
+    const z = { duration: 0 };
+    return { card: z, lift: z, land: z, deal: z, push: z, snap: z, flip: z, off: true };
+  }
   const k = s === 'fast' ? 1.8 : 1;
   return {
     card: { type: 'spring' as const, stiffness: 260 * k, damping: 22, mass: 0.9 },
     lift: { type: 'spring' as const, stiffness: 520 * k, damping: 28 },
     land: { type: 'spring' as const, stiffness: 340 * k, damping: 16, mass: 0.8 },
+    /** low damping on purpose: cards settle with a ~3° rotational overshoot */
+    deal: { type: 'spring' as const, stiffness: 210 * k, damping: 15, mass: 0.9 },
+    /** neighbours sliding out of the way of a dragged card — a bit of inertia */
+    push: { type: 'spring' as const, stiffness: 300 * k, damping: 24, mass: 1.1 },
+    /** dropped card snapping into its slot — magnetic, heavily damped */
+    snap: { type: 'spring' as const, stiffness: 700 * k, damping: 38 },
+    flip: { type: 'spring' as const, stiffness: 320 * k, damping: 26 },
+    off: false,
   };
 };

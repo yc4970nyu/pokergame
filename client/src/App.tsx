@@ -4,6 +4,7 @@ import { useNet } from './net';
 import { Home } from './Home';
 import { Lobby } from './Lobby';
 import { Table } from './Table';
+import { CardDefs } from './Card';
 
 export function App() {
   const { room, connected, toast } = useNet();
@@ -18,6 +19,7 @@ export function App() {
 
   return (
     <div className="felt">
+      <CardDefs />
       {!room ? <Home /> : !room.game ? <Lobby room={room} /> : <Table room={room} />}
 
       {!connected && <div className="offline">正在连接服务器…</div>}

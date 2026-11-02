@@ -37,10 +37,12 @@ async def main():
                 if moves == 3:
                     await pg.screenshot(path=f'{OUT}/mid.png')
             await pg.wait_for_timeout(250)
+        await pg.wait_for_timeout(420)
+        await pg.screenshot(path=f'{OUT}/chips.png')
         await pg.wait_for_timeout(2500)
         await pg.screenshot(path=f'{OUT}/result.png')
         await pg.click('button:has-text("下一局")')
-        await pg.wait_for_timeout(700)
+        await pg.wait_for_timeout(1300)
         await pg.screenshot(path=f'{OUT}/round2-deal.png')
         print('moves', moves, 'errors', errs)
         await b.close()

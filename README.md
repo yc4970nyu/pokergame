@@ -46,6 +46,11 @@ npm start
 - 一轮内只能出同一种牌型（或炸弹）。说了"不要"就不能再出，直到这一轮结束。其他人都不要，最后出牌的人重新开始。
 - 计分：先出完的人赢，加上另外几家手里剩的牌数。输家扣自己剩的牌数（零和）。只想让赢家加分的话，把 `shared/src/game.ts` 里的 `losersLosePoints` 改成 `false`。
 
+## 视觉
+
+浅色磨砂玻璃桌面 + 金色点缀，深墨蓝金边牌背。颜色都在 `client/src/styles.css` 顶部的变量里。
+动画用 Motion 的弹簧：发牌从牌堆飞向各座位、选中上浮发金光、出牌弧线飞到桌面落地回弹、对手的牌空中翻面、结算时筹码飞向赢家。右上角设置可调动画速度或关闭。
+
 ## 代码结构
 
 ```
@@ -57,7 +62,8 @@ shared/src/      规则引擎（前后端共用）
   protocol.ts    前后端消息类型
 server/src/      Socket.IO 服务器：房间、断线重连、机器人托管
 client/src/      React 前端
-client/public/cards/   牌面图片（svg-cards，LGPL，见 LICENSE-svg-cards）
+client/public/cards/   牌面：svg-cards.svg（htdebeer/SVG-cards，LGPL，见 LICENSE-svg-cards）。同目录的 PNG 是旧版本用的，现在没用到，可以删。
+                       牌背是自己设计的，在 client/src/Card.tsx 的 CardDefs 里。
 scripts/         开发用：无头浏览器截图 / 自动打一局
 ```
 
@@ -70,7 +76,8 @@ scripts/         开发用：无头浏览器截图 / 自动打一局
 
 ## 操作
 
-- 点牌选中，按住在牌上滑动可以连续选多张。
+- 点牌选中。手机上手指快速划过多张牌可以连选。
+- 理牌：手机上按住一张牌（约 0.3 秒）拿起来，拖到想要的位置；电脑上直接拖。默认按大小排，「按大小 / 按花色」随时一键重排。
 - 提示：每按一次换下一个能出的组合。
-- 电脑键盘：Enter 出牌，P 不要，H 提示，Esc 取消选择。
+- 电脑键盘：Enter 出牌，P 不要，H 提示，Esc 取消选择，Shift+←/→ 移动当前牌。
 - 右上角设置：动画速度（正常/快速/关闭）、音效开关。
