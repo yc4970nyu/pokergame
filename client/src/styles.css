@@ -164,28 +164,18 @@ input { font: inherit; }
 }
 .hero { position: relative; display: flex; flex-direction: column; align-items: center; }
 
-/* 主视觉：一手扇形的牌 */
+/* 主视觉：四张 2 扇形排开 */
 .fan {
-  --fan-w: clamp(86px, 23vw, 124px);
-  --fan-step: calc(var(--fan-w) * 0.46);
-  position: relative; width: calc(var(--fan-w) * 3.1); height: calc(var(--fan-w) * 1.98);
-  perspective: 900px; transform-style: preserve-3d;
-  touch-action: none;
+  --fan-w: clamp(84px, 22vw, 120px);
+  --fan-step: calc(var(--fan-w) * 0.5);
+  position: relative; width: calc(var(--fan-w) * 3); height: calc(var(--fan-w) * 1.8);
 }
 .fan-card {
   position: absolute; left: calc(50% - var(--fan-w) / 2); top: 6px; width: var(--fan-w);
-  transform-origin: 50% 115%; cursor: grab; touch-action: none;
+  transform-origin: 50% 115%;
   filter: drop-shadow(0 1px 1px rgba(60, 45, 20, 0.12)) drop-shadow(0 10px 14px rgba(60, 45, 20, 0.16));
 }
-.fan-card:active { cursor: grabbing; }
-.fan-flip { position: relative; transform-style: preserve-3d; }
-.fan-face, .fan-back { backface-visibility: hidden; -webkit-backface-visibility: hidden; }
-.fan-back { position: absolute; inset: 0; transform: rotateY(180deg); }
 .fan-card .card { width: 100%; border-radius: calc(var(--fan-w) * 0.07); }
-.fan-hint {
-  position: absolute; left: 0; right: 0; bottom: 0; margin: 0; text-align: center;
-  font-size: 12px; color: rgba(90, 72, 40, 0.5); letter-spacing: 0.04em; pointer-events: none;
-}
 
 .title {
   font-family: var(--font-title);
@@ -268,7 +258,7 @@ input { font: inherit; }
 /* 矮屏 / 横屏手机：牌和入口左右排 */
 @media (orientation: landscape) and (max-height: 540px) {
   .home { flex-direction: row; gap: 32px; padding: calc(12px + var(--safe-t)) 24px calc(12px + var(--safe-b)); }
-  .fan { --fan-w: clamp(70px, 15vh, 92px); height: calc(var(--fan-w) * 2.1); }
+  .fan { --fan-w: clamp(70px, 15vh, 92px); }
   .title { font-size: clamp(48px, 14vh, 72px); margin-top: 4px; }
   .subtitle { margin-top: 4px; }
   .home-actions { width: min(46vw, 340px); }

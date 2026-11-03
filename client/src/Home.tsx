@@ -1,12 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
-import { AnimatePresence, motion, useMotionValue, useSpring, useTransform } from 'motion/react';
+import { useState } from 'react';
+import { AnimatePresence, motion } from 'motion/react';
 import { api, saveName, savedName, toast } from './net';
-import { CardFace, CardBack } from './Card';
+import { CardFace } from './Card';
 import { sfx } from './sound';
 import { useSettings, springs } from './settings';
 
-/** 首页主视觉：♣3 开局，2 最大 */
-const START = [0, 47, 51, 50, 49]; // ♣3 ♠A ♠2 ♥2 ♦2
+const TWOS = [48, 49, 50, 51]; // ♣2 ♦2 ♥2 ♠2
 type Mode = null | 'create' | 'join' | 'practice';
 
 export function Home() {
@@ -166,88 +165,26 @@ function CodeBoxes({ code, setCode, autoFocus }: { code: string; setCode: (c: st
   );
 }
 
-/**
- * 可以玩的主视觉：一手扇形的牌。
- * 悬停会抬起，拖一拖会弹回，点一下翻面换一张，整把牌跟着指针轻轻倾斜。
- */
+/** 主视觉：四张 2 扇形排开，进场时依次翻开 */
 function HeroFan({ sp, still }: { sp: ReturnType<typeof springs>; still: boolean }) {
-  const [cards, setCards] = useState(START);
-  const [turns, setTurns] = useState(START.map(() => 0));
-  const dragged = useRef(false);
-  const busy = useRef(new Set<number>());
-
-  // 指针视差
-  const px = useMotionValue(0);
-  const py = useMotionValue(0);
-  const rx = useSpring(useTransform(py, [-1, 1], [7, -7]), { stiffness: 120, damping: 18 });
-  const ry = useSpring(useTransform(px, [-1, 1], [-9, 9]), { stiffness: 120, damping: 18 });
-  useEffect(() => {
-    if (still) return;
-    const move = (e: PointerEvent) => {
-      if (e.pointerType !== 'mouse') return;
-      px.set((e.clientX / window.innerWidth) * 2 - 1);
-      py.set((e.clientY / window.innerHeight) * 2 - 1);
-    };
-    window.addEventListener('pointermove', move);
-    return () => window.removeEventListener('pointermove', move);
-  }, [still, px, py]);
-
-  const flip = (i: number) => {
-    if (dragged.current || busy.current.has(i)) return;
-    busy.current.add(i);
-    sfx.unlock();
-    sfx.flip();
-    setTurns((t) => t.map((x, j) => (j === i ? x + 180 : x)));
-    window.setTimeout(() => {
-      setCards((cs) => {
-        const used = new Set(cs);
-        let c = cs[i];
-        while (used.has(c)) c = Math.floor(Math.random() * 52);
-        return cs.map((x, j) => (j === i ? c : x));
-      });
-      setTurns((t) => t.map((x, j) => (j === i ? x + 180 : x)));
-      sfx.flip();
-      window.setTimeout(() => busy.current.delete(i), 380);
-    }, still ? 0 : 300);
-  };
-
-  const n = cards.length;
+  const n = TWOS.length;
   return (
-    <motion.div className="fan" style={{ rotateX: rx, rotateY: ry }}>
-      {cards.map((c, i) => {
+    <div className="fan" aria-hidden>
+      {TWOS.map((c, i) => {
         const o = i - (n - 1) / 2;
-        const rest = { x: `calc(${o} * var(--fan-step))`, y: Math.abs(o) ** 2 * 5, rotate: o * 9, opacity: 1, scale: 1 };
         return (
           <motion.div
-            key={i}
+            key={c}
             className="fan-card"
             style={{ zIndex: i + 1 }}
             initial={{ x: 0, y: 70, rotate: 0, opacity: 0, scale: 0.9 }}
-            animate={rest}
-            transition={{ ...sp.card, delay: still ? 0 : 0.12 + i * 0.06 }}
-            whileHover={still ? undefined : { y: rest.y - 18, rotate: o * 5, zIndex: 20 }}
-            whileTap={{ scale: 1.04 }}
-            drag
-            dragSnapToOrigin
-            dragElastic={0.55}
-            dragTransition={{ bounceStiffness: 380, bounceDamping: 22 }}
-            whileDrag={{ scale: 1.1, rotate: 0, zIndex: 30 }}
-            onDragStart={() => { dragged.current = true; sfx.pickup(); }}
-            onDragEnd={() => { window.setTimeout(() => { dragged.current = false; }, 60); sfx.thunk(); }}
-            onTap={() => flip(i)}
-            role="button"
-            aria-label="翻一张牌"
+            animate={{ x: `calc(${o} * var(--fan-step))`, y: Math.abs(o) ** 2 * 6, rotate: o * 11, opacity: 1, scale: 1 }}
+            transition={{ ...sp.card, delay: still ? 0 : 0.12 + i * 0.07 }}
           >
-            <motion.div className="fan-flip" animate={{ rotateY: turns[i] }} transition={{ duration: still ? 0 : 0.3, ease: [0.4, 0, 0.2, 1] }}>
-              <div className="fan-face"><CardFace id={c} /></div>
-              <div className="fan-back"><CardBack /></div>
-            </motion.div>
+            <CardFace id={c} />
           </motion.div>
         );
       })}
-      <motion.p className="fan-hint" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: still ? 0 : 1.1 }}>
-        点一张翻面 · 拖一拖试试
-      </motion.p>
-    </motion.div>
+    </div>
   );
 }
