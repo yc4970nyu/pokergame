@@ -1,5 +1,5 @@
 import {
-  GameState, GameError, newGame, play, pass, nextRound, endMatch, newMatch, chooseBotMove, LogEvent,
+  GameState, GameError, newGame, play, pass, nextRound, endMatch, newMatch, redeal, chooseBotMove, LogEvent,
   RoomView, CardId, COMBO_NAMES,
 } from '../../shared/src/index';
 
@@ -29,6 +29,8 @@ const BOT_NAMES = ['小黑', '阿财', '老K', '雀神', '赌圣'];
 export const AUTOPLAY_AFTER_MS = 20_000;
 /** Clients animate the deal for ~5 s; nobody automated moves before it finishes */
 export const DEAL_HOLD_MS = 6_000;
+/** 四张 2：发完牌后公示多久再重新洗牌 */
+export const FOUR_TWOS_NOTICE_MS = 3_500;
 
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
@@ -211,6 +213,20 @@ export class RoomManager {
     room.botTimer = null;
     const g = room.game;
     if (!g || g.phase !== 'playing') return;
+    if (g.redealSeat !== null) {
+      // 先让大家看完发牌和「四张 2」的提示，再重新洗牌发牌
+      const seq = g.seq;
+      const wait = Math.max(0, room.dealtAt + DEAL_HOLD_MS + FOUR_TWOS_NOTICE_MS - Date.now());
+      room.botTimer = setTimeout(() => {
+        room.botTimer = null;
+        if (!room.game || room.game.seq !== seq || room.game.redealSeat === null) return;
+        room.game = redeal(room.game);
+        room.dealtAt = Date.now();
+        room.lastEvent = describe(room, room.game.log);
+        this.touch(room);
+      }, wait);
+      return;
+    }
     const p = room.players[g.turn];
     let delay: number | null = null;
     if (p.isBot) delay = 650 + Math.random() * 600;
@@ -252,6 +268,9 @@ export class RoomManager {
         ? {
             phase: g.phase,
             round: g.round,
+            dealNo: g.dealNo,
+            mustInclude: g.mustInclude,
+            redealSeat: g.redealSeat,
             turn: g.turn,
             lastPlay: g.lastPlay,
             passed: g.passed,
@@ -318,6 +337,7 @@ function describe(room: Room, log: LogEvent[]): string | null {
     if (e.kind === 'play') parts.push(`${nm(e.seat)} 出了${COMBO_NAMES[e.combo.type]}`);
     if (e.kind === 'pass') parts.push(`${nm(e.seat)} 不要`);
     if (e.kind === 'newTrick') parts.push(`${nm(e.leader)} 获得出牌权`);
+    if (e.kind === 'fourTwos') parts.push(`${nm(e.seat)} 拿到四张 2，重新洗牌发牌`);
     if (e.kind === 'roundOver') parts.push(`${nm(e.winner)} 出完了！+${e.deltas[e.winner]}`);
   }
   return parts.join('，') || null;

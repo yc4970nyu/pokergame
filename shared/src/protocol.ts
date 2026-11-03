@@ -25,6 +25,12 @@ export interface PlayerView {
 export interface GameView {
   phase: 'playing' | 'roundOver' | 'matchOver';
   round: number;
+  /** 第几次发牌（重发也算），变了就播发牌动画 */
+  dealNo: number;
+  /** 开局第一手必须带上的牌（一般是 ♣3） */
+  mustInclude: CardId | null;
+  /** 这个座位拿到了四张 2，本把作废、即将重发 */
+  redealSeat: number | null;
   turn: number;
   lastPlay: { seat: number; combo: Combo } | null;
   passed: boolean[];

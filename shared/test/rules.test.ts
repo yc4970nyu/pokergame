@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   CardId, identify, canBeat, newGame, play, pass, chooseBotMove, enumerateCombos, playableCombos,
-  GameState, rankOf, nextRound, settle, endMatch, newMatch,
+  GameState, rankOf, nextRound, settle, endMatch, newMatch, deal, redeal, legalPlays,
 } from '../src';
 
 // helper: card from "3c", "10s", "Ah", "2d"
@@ -107,7 +107,7 @@ describe('round flow', () => {
   it('a player who passed cannot play again in the same trick', () => {
     let g = mk();
     // rig hands: A leads
-    g = { ...g, turn: 0, seats: g.seats.map((s, i) => ({ ...s, hand: [cs('3c 9c Kc'), cs('5c 6c 7c'), cs('4c 8c Qc')][i] })) };
+    g = { ...g, mustInclude: null, redealSeat: null, turn: 0, seats: g.seats.map((s, i) => ({ ...s, hand: [cs('3c 9c Kc'), cs('5c 6c 7c'), cs('4c 8c Qc')][i] })) };
     g = play(g, 0, cs('3c'));   // A: 3
     g = pass(g, 1);             // B passes
     expect(g.turn).toBe(2);
@@ -123,7 +123,7 @@ describe('round flow', () => {
 
   it('leader may not pass; must follow the trick type', () => {
     let g = mk();
-    g = { ...g, turn: 0, seats: g.seats.map((s, i) => ({ ...s, hand: [cs('3c 3d 9c'), cs('5c 5d 7c'), cs('4c 8c Qc')][i] })) };
+    g = { ...g, mustInclude: null, redealSeat: null, turn: 0, seats: g.seats.map((s, i) => ({ ...s, hand: [cs('3c 3d 9c'), cs('5c 5d 7c'), cs('4c 8c Qc')][i] })) };
     expect(() => pass(g, 0)).toThrow();
     g = play(g, 0, cs('3c 3d'));
     expect(() => play(g, 1, cs('7c'))).toThrow();
@@ -133,7 +133,7 @@ describe('round flow', () => {
 
   it('scoring: winner gets the sum of the others\' remaining cards', () => {
     let g = mk();
-    g = { ...g, turn: 0, seats: g.seats.map((s, i) => ({ ...s, hand: [cs('As'), cs('3c 4c 5c 6c 8d'), cs('3d 4d 5d 6d 8h')][i] })) };
+    g = { ...g, mustInclude: null, redealSeat: null, turn: 0, seats: g.seats.map((s, i) => ({ ...s, hand: [cs('As'), cs('3c 4c 5c 6c 8d'), cs('3d 4d 5d 6d 8h')][i] })) };
     g = play(g, 0, cs('As'));
     expect(g.phase).toBe('roundOver');
     expect(g.winner).toBe(0);
@@ -179,7 +179,7 @@ describe('money (算钱)', () => {
   });
   it('game applies it: zero-sum deltas', () => {
     let g = newGame([{ id: 'a', name: 'A', isBot: false }, { id: 'b', name: 'B', isBot: false }, { id: 'c', name: 'C', isBot: false }]);
-    g = { ...g, turn: 0, seats: g.seats.map((s, i) => ({ ...s, hand: [cs('2s'), cs('3c 4c 5c 6c 2d'), cs('3d 4d')][i] })) };
+    g = { ...g, mustInclude: null, redealSeat: null, turn: 0, seats: g.seats.map((s, i) => ({ ...s, hand: [cs('2s'), cs('3c 4c 5c 6c 2d'), cs('3d 4d')][i] })) };
     g = play(g, 0, cs('2s'));
     // B: 5 cards ×2 (one 2) ×2 (尾二) = 20 ; C: 2 ×2 (尾二) = 4
     expect(g.lastDeltas).toEqual([24, -20, -4]);
@@ -209,6 +209,7 @@ describe('bot simulation', () => {
       let s: GameState = newGame(Array.from({ length: n }, (_, i) => ({ id: String(i), name: String(i), isBot: true })));
       let steps = 0;
       while (s.phase === 'playing') {
+        if (s.redealSeat !== null) { s = redeal(s); continue; }
         const m = chooseBotMove(s, s.turn);
         s = m.type === 'play' ? play(s, s.turn, m.cards) : pass(s, s.turn);
         if (++steps > 2000) throw new Error('game did not terminate');
@@ -225,7 +226,7 @@ describe('match stats (牌权 / 失误)', () => {
   /** three seats with hands we control, seat 0 to lead */
   const rig = (hands: string[]): GameState => {
     const g = newGame([0, 1, 2].map((i) => ({ id: `p${i}`, name: `P${i}`, isBot: false })));
-    return { ...g, turn: 0, lastPlay: null, seats: g.seats.map((s, i) => ({ ...s, hand: cs(hands[i]) })) };
+    return { ...g, mustInclude: null, redealSeat: null, turn: 0, lastPlay: null, seats: g.seats.map((s, i) => ({ ...s, hand: cs(hands[i]) })) };
   };
 
   it('牌权: everyone passing hands the trick back to the player, counted once', () => {
@@ -304,5 +305,54 @@ describe('match stats (牌权 / 失误)', () => {
     expect(g.history).toEqual([]);
     expect(g.seats.map((s) => s.score)).toEqual([0, 0, 0]);
     expect(g.round).toBe(1);
+  });
+});
+
+
+describe('四张 2 重发 & 第一手带 ♣3', () => {
+  const players = [0, 1, 2].map((i) => ({ id: `p${i}`, name: `P${i}`, isBot: false }));
+  /** rand that makes shuffle() a no-op → deck stays 0..51: flipped = 0, seat 2 gets ids 35..51 (all four 2s) */
+  const identity = () => 0.999999;
+
+  it('dealing four 2s to one seat flags a redeal; redeal keeps the round number', () => {
+    const g = newGame(players, undefined, identity);
+    expect(g.seats[2].hand.filter((x) => rankOf(x) === 12).length).toBe(4);
+    expect(g.redealSeat).toBe(2);
+    expect(g.log.some((e) => e.kind === 'fourTwos')).toBe(true);
+    expect(() => play(g, g.turn, [g.mustInclude!])).toThrow(/四张 2/);
+    let r = redeal(g);
+    expect(r.round).toBe(g.round);
+    expect(r.dealNo).toBe(g.dealNo + 1);
+    while (r.redealSeat !== null) r = redeal(r);
+    expect(r.seats.every((s) => s.hand.filter((x) => rankOf(x) === 12).length < 4)).toBe(true);
+  });
+
+  it('a normal deal has no redeal flag', () => {
+    for (let i = 0; i < 200; i++) {
+      const g = newGame(players);
+      const four = g.seats.some((s) => s.hand.filter((x) => rankOf(x) === 12).length === 4);
+      expect(g.redealSeat !== null).toBe(four);
+    }
+  });
+
+  it('first play must include ♣3 (the leader\'s lowest card); later plays need not', () => {
+    let g = newGame(players);
+    while (g.redealSeat !== null) g = redeal(g);
+    expect(g.mustInclude).toBe(0);
+    const hand = g.seats[g.turn].hand;
+    const other = hand.find((x) => x !== 0)!;
+    expect(() => play(g, g.turn, [other])).toThrow(/♣3/);
+    expect(legalPlays(g, g.turn).every((c) => c.cards.includes(0))).toBe(true);
+    g = play(g, g.turn, [0]);
+    expect(g.mustInclude).toBe(null);
+  });
+
+  it('2 players with ♣3 undealt: must include the leader\'s lowest card', () => {
+    for (let i = 0; i < 50; i++) {
+      let g = newGame(players.slice(0, 2));
+      while (g.redealSeat !== null) g = redeal(g);
+      expect(g.mustInclude).toBe(Math.min(...g.seats[g.turn].hand));
+    }
+    void deal;
   });
 });

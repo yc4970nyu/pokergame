@@ -1,4 +1,4 @@
-import { CardId, fullDeck, shuffle, sortCards, rankOf } from './cards';
+import { CardId, fullDeck, shuffle, sortCards, rankOf, cardLabel } from './cards';
 import { Combo, canBeat, identify, isBomb, playableCombos, COMBO_NAMES } from './combos';
 
 export interface GameConfig {
@@ -92,7 +92,8 @@ export type LogEvent =
   | { kind: 'play'; seat: number; combo: Combo }
   | { kind: 'pass'; seat: number }
   | { kind: 'newTrick'; leader: number }
-  | { kind: 'roundOver'; winner: number; deltas: number[] };
+  | { kind: 'roundOver'; winner: number; deltas: number[] }
+  | { kind: 'fourTwos'; seat: number };
 
 export interface GameState {
   config: GameConfig;
@@ -117,6 +118,12 @@ export interface GameState {
   passes: number[];
   /** 整场比赛每一局的存档，换局不清空 */
   history: RoundRecord[];
+  /** 第几次发牌（重发也算一次），客户端用它触发发牌动画 */
+  dealNo: number;
+  /** 开局第一手必须带上的牌（先出那个人手里最小的牌，一般是 ♣3）；出过第一手后为 null */
+  mustInclude: CardId | null;
+  /** 有人拿到四张 2：这把作废，等服务器重新洗牌发牌。null = 正常 */
+  redealSeat: number | null;
   /** Monotonic counter; bumps on every change so clients can animate */
   seq: number;
   log: LogEvent[];
@@ -147,6 +154,9 @@ export function newGame(
     misses: players.map(() => 0),
     passes: players.map(() => 0),
     history: [],
+    dealNo: 0,
+    mustInclude: null,
+    redealSeat: null,
     seq: 0,
     log: [],
   };
@@ -161,7 +171,7 @@ export function newGame(
  *     If the flipped card *is* ♣3, it goes to whoever holds the next-lowest card.
  *  4. That player leads.
  */
-export function deal(prev: GameState, rand: () => number = Math.random): GameState {
+export function deal(prev: GameState, rand: () => number = Math.random, isRedeal = false): GameState {
   const n = prev.seats.length;
   const deck = shuffle(fullDeck(), rand);
   const flipped = deck[0];
@@ -178,12 +188,19 @@ export function deal(prev: GameState, rand: () => number = Math.random): GameSta
     }
   });
   hands[lowestSeat].push(flipped);
+  // 第一手必须带上先出那个人手里最小的牌（发了 ♣3 就是 ♣3）
+  const mustInclude = Math.min(...hands[lowestSeat]);
+  // 有人拿到四张 2 → 这把作废，重新洗牌
+  const fourTwos = hands.findIndex((h) => h.filter((c) => rankOf(c) === RANK_TWO).length === 4);
+  const redealSeat = fourTwos >= 0 ? fourTwos : null;
+  const log: LogEvent[] = [{ kind: 'deal', flipped, flippedTo: lowestSeat, leader: lowestSeat }];
+  if (redealSeat !== null) log.push({ kind: 'fourTwos', seat: redealSeat });
 
   return {
     ...prev,
     seats: prev.seats.map((s, i) => ({ ...s, hand: sortCards(hands[i]) })),
     phase: 'playing',
-    round: prev.round + 1,
+    round: isRedeal ? prev.round : prev.round + 1,
     turn: lowestSeat,
     lastPlay: null,
     passed: Array(n).fill(false),
@@ -195,9 +212,25 @@ export function deal(prev: GameState, rand: () => number = Math.random): GameSta
     tricksWon: Array(n).fill(0),
     misses: Array(n).fill(0),
     passes: Array(n).fill(0),
+    dealNo: (prev.dealNo ?? 0) + 1,
+    mustInclude,
+    redealSeat,
     seq: prev.seq + 1,
-    log: [{ kind: 'deal', flipped, flippedTo: lowestSeat, leader: lowestSeat }],
+    log,
   };
+}
+
+/** 有人拿到四张 2 之后：同一局重新洗牌发牌（局数不变） */
+export function redeal(state: GameState, rand: () => number = Math.random): GameState {
+  if (state.redealSeat === null) throw new GameError('不需要重新发牌');
+  return deal(state, rand, true);
+}
+
+/** 这个座位现在能出的所有牌型（含「第一手必须带 ♣3」的限制） */
+export function legalPlays(state: GameState, seat: number): Combo[] {
+  const opts = playableCombos(state.seats[seat].hand, state.lastPlay?.combo ?? null);
+  const must = state.mustInclude;
+  return must === null ? opts : opts.filter((c) => c.cards.includes(must));
 }
 
 const bump = (xs: number[], i: number) => xs.map((x, j) => (j === i ? x + 1 : x));
@@ -215,10 +248,13 @@ function nextActive(state: GameState, from: number, passed: boolean[]): number {
 /** Validate a play without applying it. Returns the combo or throws. */
 export function validatePlay(state: GameState, seat: number, cards: CardId[]): Combo {
   if (state.phase !== 'playing') throw new GameError('这局已经结束');
+  if (state.redealSeat !== null) throw new GameError('有人拿到四张 2，正在重新发牌');
   if (seat !== state.turn) throw new GameError('还没轮到你');
   const hand = new Set(state.seats[seat].hand);
   if (cards.length === 0) throw new GameError('请选择要出的牌');
   if (!cards.every((c) => hand.has(c))) throw new GameError('你手里没有这些牌');
+  if (state.mustInclude !== null && !cards.includes(state.mustInclude))
+    throw new GameError(`第一手必须带上 ${cardLabel(state.mustInclude)}`);
   const combo = identify(cards);
   if (!combo) throw new GameError('不是合法的牌型');
   const prev = state.lastPlay?.combo ?? null;
@@ -231,6 +267,7 @@ export function validatePlay(state: GameState, seat: number, cards: CardId[]): C
 
 export function play(state: GameState, seat: number, cards: CardId[]): GameState {
   const combo = validatePlay(state, seat, cards);
+  state = { ...state, mustInclude: null };
   const played = new Set(combo.cards);
   const seats = state.seats.map((s, i) => (i === seat ? { ...s, hand: s.hand.filter((c) => !played.has(c)) } : s));
   const log: LogEvent[] = [{ kind: 'play', seat, combo }];
@@ -283,6 +320,7 @@ export function play(state: GameState, seat: number, cards: CardId[]): GameState
 
 export function pass(state: GameState, seat: number): GameState {
   if (state.phase !== 'playing') throw new GameError('这局已经结束');
+  if (state.redealSeat !== null) throw new GameError('有人拿到四张 2，正在重新发牌');
   if (seat !== state.turn) throw new GameError('还没轮到你');
   if (!state.lastPlay) throw new GameError('你是这一轮的首家，必须出牌');
   const passed = state.passed.slice();

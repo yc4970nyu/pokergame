@@ -1,6 +1,6 @@
 import { CardId } from './cards';
-import { Combo, isBomb, playableCombos } from './combos';
-import { GameState } from './game';
+import { Combo, isBomb } from './combos';
+import { GameState, legalPlays } from './game';
 
 export type BotMove = { type: 'play'; cards: CardId[] } | { type: 'pass' };
 
@@ -13,7 +13,7 @@ export type BotMove = { type: 'play'; cards: CardId[] } | { type: 'pass' };
 export function chooseBotMove(state: GameState, seat: number): BotMove {
   const hand = state.seats[seat].hand;
   const prev = state.lastPlay?.combo ?? null;
-  const options = playableCombos(hand, prev);
+  const options = legalPlays(state, seat);
   const threat = Math.min(...state.seats.filter((_, i) => i !== seat).map((s) => s.hand.length));
 
   // Can we go out right now?

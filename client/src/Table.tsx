@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, animate } from 'motion/react';
 import type { RoomView, PlayerView } from '../../shared/src/protocol';
-import { CardId, rankOf, suitOf } from '../../shared/src/cards';
+import { CardId, rankOf, suitOf, cardLabel } from '../../shared/src/cards';
 import { identify, canBeat, playableCombos, COMBO_NAMES, isBomb, Combo } from '../../shared/src/combos';
 import type { Payment } from '../../shared/src/game';
 import { CardFace, CardBack } from './Card';
@@ -50,10 +50,10 @@ export function Table({ room }: { room: RoomView }) {
   // ---- the opening deal: decided synchronously on the first render of each round ----
   const planRef = useRef<DealPlan | null>(null);
   const seenRound = useRef<number | null>(null);
-  if (seenRound.current !== g.round) {
+  if (seenRound.current !== g.dealNo) {
     const fresh = g.phase === 'playing' && !g.lastPlay && g.yourHand.length >= 17 && g.flipped !== null && g.flippedTo !== null;
-    planRef.current = fresh && !sp.off ? makeDealPlan(g.round, n, g.flipped!, g.flippedTo!, k) : null;
-    seenRound.current = g.round;
+    planRef.current = fresh && !sp.off ? makeDealPlan(g.dealNo, n, g.flipped!, g.flippedTo!, k) : null;
+    seenRound.current = g.dealNo;
   }
   const plan = planRef.current;
   const elapsed = plan ? (performance.now() - plan.startedAt) / 1000 : Infinity;
@@ -70,9 +70,9 @@ export function Table({ room }: { room: RoomView }) {
   }, [plan]);
 
   // hand order: on a new round start from rank order immediately (no flash of last round's cards)
-  const orderRound = useRef(g.round);
+  const orderRound = useRef(g.dealNo);
   const shownOrder = (() => {
-    if (orderRound.current !== g.round) return sortBy(g.yourHand, 'rank');
+    if (orderRound.current !== g.dealNo) return sortBy(g.yourHand, 'rank');
     const inHand = new Set(g.yourHand);
     const kept = order.filter((c) => inHand.has(c));
     const missing = g.yourHand.filter((c) => !kept.includes(c));
@@ -88,8 +88,8 @@ export function Table({ room }: { room: RoomView }) {
       if (g.lastPlay) setGhost(g.lastPlay);
       return;
     }
-    if (!prev || g.round !== prev.round) {
-      orderRound.current = g.round;
+    if (!prev || g.dealNo !== prev.dealNo) {
+      orderRound.current = g.dealNo;
       setSelected(new Set());
       setGhost(null);
       setOrder(sortBy(g.yourHand, 'rank'));
@@ -110,7 +110,7 @@ export function Table({ room }: { room: RoomView }) {
 
   // keep my custom order when cards leave the hand
   useEffect(() => {
-    orderRound.current = g.round;
+    orderRound.current = g.dealNo;
     if (shownOrder !== order) setOrder(shownOrder);
     setSelected((s) => {
       const inHand = new Set(g.yourHand);
@@ -126,13 +126,17 @@ export function Table({ room }: { room: RoomView }) {
   };
 
   const prevCombo = g.lastPlay?.combo ?? null;
-  const myTurn = !dealing && g.phase === 'playing' && g.turn === me;
+  const redealing = g.redealSeat !== null;
+  const myTurn = !dealing && !redealing && g.phase === 'playing' && g.turn === me;
+  const must = g.mustInclude;
   const selCombo = selected.size ? identify([...selected]) : null;
-  const selOk = !!selCombo && canBeat(selCombo, prevCombo);
+  const selHasMust = must === null || selected.has(must);
+  const selOk = !!selCombo && canBeat(selCombo, prevCombo) && selHasMust;
 
   const doPlay = async () => {
     if (!myTurn || sending) return;
     if (!selCombo) { sfx.error(); return toast(selected.size ? '这不是合法的牌型' : '先选牌'); }
+    if (!selHasMust) { sfx.error(); return toast(`第一手必须带上 ${cardLabel(must!)}`); }
     if (!selOk) {
       sfx.error();
       return toast(prevCombo && prevCombo.type !== selCombo.type && !isBomb(selCombo.type) ? `这一轮要出${COMBO_NAMES[prevCombo.type]}` : '压不过');
@@ -154,7 +158,7 @@ export function Table({ room }: { room: RoomView }) {
   };
 
   const doHint = () => {
-    const opts = playableCombos(g.yourHand, prevCombo);
+    const opts = playableCombos(g.yourHand, prevCombo).filter((c) => must === null || c.cards.includes(must));
     if (!opts.length) { sfx.error(); return toast('没有能压过的牌'); }
     const pick = opts[hintIdx % opts.length];
     setHintIdx((i) => i + 1);
@@ -219,7 +223,7 @@ export function Table({ room }: { room: RoomView }) {
             p={p}
             count={plan && dealing ? countAt(plan, p.seat, elapsed, p.cardCount) : p.cardCount}
             pos={posOf(p.seat, me, n)}
-            active={!dealing && g.phase === 'playing' && g.turn === p.seat}
+            active={!dealing && !redealing && g.phase === 'playing' && g.turn === p.seat}
             passed={g.passed[p.seat]}
             sp={sp}
           />
@@ -229,7 +233,7 @@ export function Table({ room }: { room: RoomView }) {
           <AnimatePresence mode="popLayout">
             {shown && (
               <TrickCards
-                key={`${g.round}-${shown.seat}-${shown.combo.cards.join('.')}`}
+                key={`${g.dealNo}-${shown.seat}-${shown.combo.cards.join('.')}`}
                 play={shown}
                 dim={!g.lastPlay && g.phase === 'playing'}
                 win={over && shown.seat === g.winner}
@@ -239,8 +243,12 @@ export function Table({ room }: { room: RoomView }) {
               />
             )}
           </AnimatePresence>
-          {!shown && !dealing && g.phase === 'playing' && (
-            <div className="trick-empty">{myTurn ? '你先出，出什么都行' : `等 ${turnName} 先出`}</div>
+          {!shown && !dealing && !redealing && g.phase === 'playing' && (
+            <div className="trick-empty">
+              {must !== null
+                ? myTurn ? `你先出，第一手要带上 ${cardLabel(must)}` : `等 ${turnName} 先出（要带 ${cardLabel(must)}）`
+                : myTurn ? '你先出，出什么都行' : `等 ${turnName} 先出`}
+            </div>
           )}
 
         </div>
@@ -256,12 +264,12 @@ export function Table({ room }: { room: RoomView }) {
           <span className="me-name">{meP?.name}</span>
           {g.passed[me] && <span className="pass-tag">不要</span>}
           <span className="me-status">
-            {g.phase !== 'playing'
+            {g.phase !== 'playing' || dealing || redealing
               ? ''
               : myTurn
                 ? selCombo
-                  ? `${COMBO_NAMES[selCombo.type]}${selOk ? '' : ' · 压不过'}`
-                  : g.lastPlay ? `要压${COMBO_NAMES[g.lastPlay.combo.type]}` : '轮到你出牌'
+                  ? `${COMBO_NAMES[selCombo.type]}${selOk ? '' : selHasMust ? ' · 压不过' : ` · 要带 ${cardLabel(must!)}`}`
+                  : g.lastPlay ? `要压${COMBO_NAMES[g.lastPlay.combo.type]}` : must !== null ? `先出，要带 ${cardLabel(must)}` : '轮到你出牌'
                 : `等 ${turnName}`}
           </span>
         </div>
@@ -277,7 +285,7 @@ export function Table({ room }: { room: RoomView }) {
           setOrder={(o) => { setOrder(o); setSortMode('custom'); }}
           selected={selected}
           setSelected={setSelected}
-          round={g.round}
+          round={g.dealNo}
           sp={sp}
           deal={plan}
           me={me}
@@ -308,6 +316,11 @@ export function Table({ room }: { room: RoomView }) {
       )}
 
       <AnimatePresence>
+        {redealing && !dealing && g.phase === 'playing' && (
+          <FourTwos key={`ft-${g.dealNo}`} name={room.players[g.redealSeat!]?.name ?? '?'} isMe={g.redealSeat === me} sp={sp} />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
         {over && <RoundOver room={room} sp={sp} speed={speed} k={k} onEnd={() => setConfirmEnd(true)} />}
       </AnimatePresence>
       <AnimatePresence>
@@ -325,6 +338,34 @@ export function Table({ room }: { room: RoomView }) {
 }
 
 // ---------------------------------------------------------------------------
+
+/** 有人拿到四张 2：公示一下，服务器几秒后重新洗牌发牌 */
+function FourTwos({ name, isMe, sp }: { name: string; isMe: boolean; sp: Springs }) {
+  return (
+    <motion.div className="overlay soft" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}>
+      <motion.div
+        className="confirm panel four-twos"
+        role="alertdialog"
+        aria-live="assertive"
+        initial={{ y: 26, scale: 0.95, opacity: 0 }}
+        animate={{ y: 0, scale: 1, opacity: 1 }}
+        exit={{ y: -14, scale: 0.97, opacity: 0 }}
+        transition={sp.card}
+      >
+        <div className="ft-cards">
+          {[48, 49, 50, 51].map((c, i) => (
+            <motion.div key={c} initial={{ y: 18, opacity: 0, rotate: 0 }} animate={{ y: 0, opacity: 1, rotate: (i - 1.5) * 7 }} transition={{ ...sp.card, delay: 0.12 + i * 0.07 }}>
+              <CardFace id={c} className="tiny" />
+            </motion.div>
+          ))}
+        </div>
+        <h3 className="confirm-title">{isMe ? '你' : name} 拿到了四张 2</h3>
+        <p className="confirm-sub">这把不算，重新洗牌发牌…</p>
+        <div className="ft-bar"><motion.i initial={{ scaleX: 0 }} animate={{ scaleX: 1 }} transition={{ duration: 3.2, ease: 'linear' }} /></div>
+      </motion.div>
+    </motion.div>
+  );
+}
 
 const LANDSCAPE_Q = '(orientation: landscape) and (max-height: 540px)';
 
