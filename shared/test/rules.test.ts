@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   CardId, identify, canBeat, newGame, play, pass, chooseBotMove, enumerateCombos, playableCombos,
-  GameState, rankOf, nextRound, settle,
+  GameState, rankOf, nextRound, settle, endMatch, newMatch,
 } from '../src';
 
 // helper: card from "3c", "10s", "Ah", "2d"
@@ -152,9 +152,10 @@ describe('money (算钱)', () => {
   it('base: cards left', () => {
     expect(pay(['3d 4d 5d 6d 7d']).payments[0].amount).toBe(5);
   });
-  it('more than 10 cards: ×2 (11 cards → 22); exactly 10 is not doubled', () => {
+  it('10 or more cards: ×2 (11 → 22, exactly 10 → 20); 9 is not doubled', () => {
     expect(pay(['3d 4d 5d 6d 7d 8d 9d 10d Jd Qd Kd']).payments[0].amount).toBe(22);
-    expect(pay(['3d 4d 5d 6d 7d 8d 9d 10d Jd Qd']).payments[0].amount).toBe(10);
+    expect(pay(['3d 4d 5d 6d 7d 8d 9d 10d Jd Qd']).payments[0].amount).toBe(20);
+    expect(pay(['3d 4d 5d 6d 7d 8d 9d 10d Jd']).payments[0].amount).toBe(9);
   });
   it('11 cards with one 2: ×2 ×2 → 44', () => {
     expect(pay(['3d 4d 5d 6d 7d 8d 9d 10d Jd Qd 2d']).payments[0].amount).toBe(44);
@@ -216,5 +217,92 @@ describe('bot simulation', () => {
       expect(s.seats[s.winner!].hand.length).toBe(0);
       void rankOf;
     }
+  });
+});
+
+
+describe('match stats (牌权 / 失误)', () => {
+  /** three seats with hands we control, seat 0 to lead */
+  const rig = (hands: string[]): GameState => {
+    const g = newGame([0, 1, 2].map((i) => ({ id: `p${i}`, name: `P${i}`, isBot: false })));
+    return { ...g, turn: 0, lastPlay: null, seats: g.seats.map((s, i) => ({ ...s, hand: cs(hands[i]) })) };
+  };
+
+  it('牌权: everyone passing hands the trick back to the player, counted once', () => {
+    let g = rig(['2s 3c 4c', '3d 4d 5d', '3h 4h 5h']);
+    g = play(g, 0, cs('2s')); // nobody can beat a ♠2
+    g = pass(g, 1);
+    g = pass(g, 2);
+    expect(g.tricksWon).toEqual([1, 0, 0]);
+    expect(g.turn).toBe(0); // leads again
+    expect(g.lastPlay).toBe(null);
+  });
+
+  it('牌权 is not credited for the opening lead', () => {
+    const g = rig(['2s 3c', '3d 4d', '3h 4h']);
+    expect(g.tricksWon).toEqual([0, 0, 0]);
+  });
+
+  it('失误: passing with a plain beat available counts, otherwise it does not', () => {
+    let g = rig(['5c 6c 7c', '9d 3d 4d', '3h 4h 5h']);
+    g = play(g, 0, cs('5c'));
+    g = pass(g, 1); // held ♦9, could have beaten ♣5 → 失误
+    expect(g.misses).toEqual([0, 1, 0]);
+    expect(g.passes).toEqual([0, 1, 0]);
+    g = pass(g, 2); // ♥3/♥4 can't beat ♣5, ♥5 can (heart > club) → also a miss
+    expect(g.misses).toEqual([0, 1, 1]);
+  });
+
+  it('失误: a pass with nothing that beats the table is clean', () => {
+    let g = rig(['2s 3c 4c', '3d 4d 5d', '3h 4h 5h']);
+    g = play(g, 0, cs('2s'));
+    g = pass(g, 1);
+    expect(g.misses).toEqual([0, 0, 0]);
+  });
+
+  it('失误: holding only a bomb is not a mistake', () => {
+    let g = rig(['5c 6c 7c', '9d 9h 9s 9c 3d', '3h 4h']);
+    g = play(g, 0, cs('5c'));
+    g = pass(g, 1); // ♦9 beats ♣5 → that is a plain beat, so it IS a miss
+    expect(g.misses[1]).toBe(1);
+    // now a case where only the bomb could answer: a straight on the table
+    let h = rig(['3c 4c 5c 6c 7c 8c', '9d 9h 9s 9c 3d', '3h 4h 5h 6h 7h']);
+    h = play(h, 0, cs('4c 5c 6c 7c 8c'));
+    h = pass(h, 1); // seat 1 has only 铁支 (a bomb) — not counted
+    expect(h.misses[1]).toBe(0);
+    expect(h.passes[1]).toBe(1);
+  });
+
+  it('history: a finished round is archived, counters reset, scores accumulate', () => {
+    let g = rig(['2s', '3d 4d 5d', '3h 4h']);
+    g = play(g, 0, cs('2s')); // seat 0 goes out on a single 2 → 尾二
+    expect(g.phase).toBe('roundOver');
+    expect(g.history).toHaveLength(1);
+    const rec = g.history[0];
+    expect(rec.winner).toBe(0);
+    expect(rec.tailTwo).toBe(true);
+    expect(rec.seats[1].cardsLeft).toBe(3);
+    expect(rec.seats[1].amount).toBe(-6); // 3 × 2 (尾二)
+    expect(rec.seats.reduce((a, x) => a + x.amount, 0)).toBe(0); // zero-sum
+
+    g = nextRound(g);
+    expect(g.history).toHaveLength(1); // survives the deal
+    expect(g.tricksWon).toEqual([0, 0, 0]); // per-round counters reset
+    expect(g.misses).toEqual([0, 0, 0]);
+    expect(g.seats[0].score).toBe(10);
+  });
+
+  it('endMatch stops the game; newMatch clears scores and history', () => {
+    let g = rig(['2s', '3d 4d 5d', '3h 4h']);
+    g = play(g, 0, cs('2s'));
+    g = endMatch(g);
+    expect(g.phase).toBe('matchOver');
+    expect(() => nextRound(g)).toThrow();
+
+    g = newMatch(g);
+    expect(g.phase).toBe('playing');
+    expect(g.history).toEqual([]);
+    expect(g.seats.map((s) => s.score)).toEqual([0, 0, 0]);
+    expect(g.round).toBe(1);
   });
 });

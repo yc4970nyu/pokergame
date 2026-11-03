@@ -5,16 +5,16 @@ import { CardId, rankOf, suitOf } from '../../shared/src/cards';
 import { identify, canBeat, playableCombos, COMBO_NAMES, isBomb, Combo } from '../../shared/src/combos';
 import type { Payment } from '../../shared/src/game';
 import { CardFace, CardBack } from './Card';
+import { ConfirmEnd, Scoreboard } from './Scoreboard';
 import { Hand } from './Hand';
 import { TrickCards, DealSequence, ChipsLayer } from './Trick';
 import { DealPlan, makeDealPlan, countAt } from './deal';
 import { rememberHandRects } from './fly';
 import { api, toast } from './net';
 import { sfx } from './sound';
-import { useSettings, setSettings, springs, speedFactor, Speed } from './settings';
+import { useSettings, setSettings, springs, speedFactor, Speed, Springs } from './settings';
 
 type Pos = 'bottom' | 'left' | 'right' | 'top';
-type Springs = ReturnType<typeof springs>;
 type SortMode = 'rank' | 'suit';
 
 const posOf = (seat: number, me: number, n: number): Pos => {
@@ -41,6 +41,8 @@ export function Table({ room }: { room: RoomView }) {
   const [hintIdx, setHintIdx] = useState(0);
   const [ghost, setGhost] = useState<{ seat: number; combo: Combo } | null>(null);
   const [menu, setMenu] = useState(false);
+  const landscape = useLandscape();
+  const [confirmEnd, setConfirmEnd] = useState(false);
   const [sending, setSending] = useState(false);
   const [, setTick] = useState(0);
   const prevRef = useRef<typeof g | null>(null);
@@ -177,6 +179,7 @@ export function Table({ room }: { room: RoomView }) {
   const opponents = room.players.filter((p) => p.seat !== me);
   const meP = room.players[me];
   const over = g.phase === 'roundOver';
+  const matchOver = g.phase === 'matchOver';
   const bigWin = over && ((g.lastDeltas?.[g.winner!] ?? 0) >= 20 || !!g.settlement?.tailTwo);
 
   return (
@@ -204,7 +207,7 @@ export function Table({ room }: { room: RoomView }) {
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden><path fill="currentColor" d="M4 7h10.2a3 3 0 0 0 5.6 0H20V5h-.2a3 3 0 0 0-5.6 0H4v2Zm13-2a1 1 0 1 1 0 2 1 1 0 0 1 0-2ZM4 13h.2a3 3 0 0 0 5.6 0H20v-2H9.8a3 3 0 0 0-5.6 0H4v2Zm3-2a1 1 0 1 1 0 2 1 1 0 0 1 0-2Zm-3 8h10.2a3 3 0 0 0 5.6 0H20v-2h-.2a3 3 0 0 0-5.6 0H4v2Zm13-2a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z" /></svg>
           </button>
         </div>
-        <AnimatePresence>{menu && <SettingsMenu speed={speed} onClose={() => setMenu(false)} />}</AnimatePresence>
+        <AnimatePresence>{menu && <SettingsMenu speed={speed} onClose={() => setMenu(false)} onEnd={() => setConfirmEnd(true)} />}</AnimatePresence>
       </header>
 
       {/* ---------- arena ---------- */}
@@ -248,6 +251,7 @@ export function Table({ room }: { room: RoomView }) {
       {/* ---------- my bar ---------- */}
       <section className={`me-bar ${myTurn ? 'my-turn' : ''}`}>
         <div className="me-info" data-seat={me}>
+          <AnimatePresence>{myTurn && g.phase === 'playing' && !dealing && <TurnMarker sp={sp} />}</AnimatePresence>
           <span className={`turn-dot ${myTurn ? 'on' : ''}`} />
           <span className="me-name">{meP?.name}</span>
           {g.passed[me] && <span className="pass-tag">不要</span>}
@@ -280,6 +284,7 @@ export function Table({ room }: { room: RoomView }) {
           locked={dealing}
           active={myTurn}
           idle={!sp.off}
+          landscape={landscape}
         />
         <div className="actions">
           <button className="btn act" disabled={!myTurn || !g.lastPlay || sending} onClick={doPass}>不要</button>
@@ -302,12 +307,58 @@ export function Table({ room }: { room: RoomView }) {
         />
       )}
 
-      <AnimatePresence>{over && <RoundOver room={room} sp={sp} speed={speed} k={k} />}</AnimatePresence>
+      <AnimatePresence>
+        {over && <RoundOver room={room} sp={sp} speed={speed} k={k} onEnd={() => setConfirmEnd(true)} />}
+      </AnimatePresence>
+      <AnimatePresence>
+        {confirmEnd && (
+          <ConfirmEnd
+            sp={sp}
+            onNo={() => setConfirmEnd(false)}
+            onYes={() => { setConfirmEnd(false); api.end(); }}
+          />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>{matchOver && <Scoreboard room={room} sp={sp} />}</AnimatePresence>
     </motion.div>
   );
 }
 
 // ---------------------------------------------------------------------------
+
+const LANDSCAPE_Q = '(orientation: landscape) and (max-height: 540px)';
+
+/** True while the phone is held sideways (and on any short, wide viewport). */
+export function useLandscape() {
+  const [on, setOn] = useState(() => typeof window !== 'undefined' && window.matchMedia(LANDSCAPE_Q).matches);
+  useEffect(() => {
+    const m = window.matchMedia(LANDSCAPE_Q);
+    const sync = () => setOn(m.matches);
+    sync();
+    m.addEventListener('change', sync);
+    return () => m.removeEventListener('change', sync);
+  }, []);
+  return on;
+}
+
+/**
+ * The turn marker: one pane of lit glass that slides to whoever is on turn.
+ * Rendered inside the active player's name panel; `layoutId` makes Motion
+ * carry the same element across seats instead of fading one out and another in.
+ */
+function TurnMarker({ sp }: { sp: Springs }) {
+  return (
+    <motion.span
+      layoutId="turn-marker"
+      className="turn-marker"
+      aria-hidden
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ ...sp.push, opacity: { duration: 0.18 } }}
+    />
+  );
+}
 
 /** A clear glass coffee table seen from slightly above: floor shadow and brass legs under a frosted top with a green slab edge and glare. */
 function GlassTable() {
@@ -335,6 +386,7 @@ function Seat({ p, count, pos, active, passed, sp }: { p: PlayerView; count: num
         ))}
       </div>
       <div className="seat-info panel" data-seat={p.seat}>
+        <AnimatePresence>{active && <TurnMarker sp={sp} />}</AnimatePresence>
         <div className={`avatar ${active ? 'ring' : ''}`}>{p.name.slice(0, 1)}</div>
         <div className="seat-text">
           <div className="seat-name">
@@ -382,10 +434,10 @@ function CountUp({ to, speed, delay }: { to: number; speed: Speed; delay: number
   return <span ref={ref} className="num">0</span>;
 }
 
-/** "11 张 ×2 超过10张 ×2 剩一张2 ×2 尾二" */
+/** "11 张 ×2 满10张 ×2 剩一张2 ×2 尾二" */
 function Formula({ p }: { p: Payment }) {
   const parts: string[] = [];
-  if (p.over10) parts.push('超过10张 ×2');
+  if (p.over10) parts.push('满10张 ×2');
   if (p.twos) parts.push(`剩${p.twos}张2 ×${2 ** p.twos}`);
   if (p.tailTwo) parts.push('尾二 ×2');
   return (
@@ -397,7 +449,7 @@ function Formula({ p }: { p: Payment }) {
   );
 }
 
-function RoundOver({ room, sp, speed, k }: { room: RoomView; sp: Springs; speed: Speed; k: number }) {
+function RoundOver({ room, sp, speed, k, onEnd }: { room: RoomView; sp: Springs; speed: Speed; k: number; onEnd: () => void }) {
   const g = room.game!;
   const winner = room.players[g.winner!];
   const iWon = g.winner === g.yourSeat;
@@ -433,7 +485,7 @@ function RoundOver({ room, sp, speed, k }: { room: RoomView; sp: Springs; speed:
             })}
         </ul>
         <div className="result-actions">
-          <button className="btn ghost" onClick={api.leave}>离开房间</button>
+          <button className="btn ghost" onClick={onEnd}>结束比赛</button>
           <button className="btn gold big" onClick={api.next}>下一局</button>
         </div>
       </motion.div>
@@ -441,7 +493,7 @@ function RoundOver({ room, sp, speed, k }: { room: RoomView; sp: Springs; speed:
   );
 }
 
-function SettingsMenu({ speed, onClose }: { speed: Speed; onClose: () => void }) {
+function SettingsMenu({ speed, onClose, onEnd }: { speed: Speed; onClose: () => void; onEnd: () => void }) {
   const { sound } = useSettings();
   return (
     <motion.div className="menu panel" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
@@ -464,7 +516,10 @@ function SettingsMenu({ speed, onClose }: { speed: Speed; onClose: () => void })
       </div>
       <p className="menu-keys">理牌：按住一张牌拖到想要的位置（电脑上直接拖）。键盘：Enter 出牌，P 不要，H 提示，Shift+←/→ 移动牌。</p>
       <div className="menu-row">
+        <button className="btn small ghost" onClick={() => { onClose(); onEnd(); }}>结束比赛</button>
         <button className="btn small ghost" onClick={() => { if (confirm('离开后由机器人替你托管，确定吗？')) api.leave(); }}>离开房间</button>
+      </div>
+      <div className="menu-row">
         <button className="btn small" onClick={onClose}>关闭</button>
       </div>
     </motion.div>

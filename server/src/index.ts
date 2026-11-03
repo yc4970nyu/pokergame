@@ -72,6 +72,8 @@ io.on('connection', (socket) => {
   socket.on('room:setMax', ({ maxPlayers }) => guard(() => rooms.setMax(me(), maxPlayers === 2 ? 2 : 3)));
   socket.on('game:start', () => guard(() => rooms.start(me())));
   socket.on('game:next', () => guard(() => rooms.next(me())));
+  socket.on('game:end', () => guard(() => rooms.end(me())));
+  socket.on('game:newMatch', () => guard(() => rooms.newMatch(me())));
 
   socket.on('game:play', ({ cards }, ack) => {
     try {

@@ -12,6 +12,30 @@ type Springs = ReturnType<typeof springs>;
 interface Slot { x: number; y: number; r: number; z: number }
 
 /** Slot geometry for n cards: one fanned arc, or two rows on narrow screens. */
+/**
+ * Landscape on a phone: one row, always. The strip's height comes from CSS, so
+ * the cards are sized to fill it and the overlap absorbs however many there are.
+ */
+function landscapeSlots(n: number, w: number, strip: number) {
+  const lift = 20; // headroom so a selected card can rise without clipping
+  // leave a floor under the fan: the tilt swings the end cards a few px lower
+  const ch = Math.max(58, Math.min(132, strip - lift - 18));
+  const cw = ch / (244.64 / 169.075);
+  const pad = 8;
+  const usable = Math.max(cw, w - pad * 2);
+  const step = n > 1 ? Math.min(cw * 0.62, (usable - cw) / (n - 1)) : 0;
+  const span = cw + step * Math.max(0, n - 1);
+  const x0 = pad + (usable - span) / 2;
+  const mid = (n - 1) / 2 || 1;
+  const slots: Slot[] = [];
+  for (let i = 0; i < n; i++) {
+    const t = (i - mid) / mid;
+    // a much flatter fan than portrait — there is no vertical room for an arc
+    slots.push({ x: x0 + i * step, y: lift + t * t * ch * 0.05, r: t * 3, z: i });
+  }
+  return { slots, cw, ch, height: strip };
+}
+
 function computeSlots(n: number, w: number, h: number) {
   const cw = Math.max(50, Math.min(112, w / 6, h * 0.16));
   const ch = cw * (244.64 / 169.075);
@@ -50,7 +74,7 @@ type Gesture =
   | { mode: 'drag'; id: CardId; dx: number; dy: number };
 
 export function Hand({
-  order, setOrder, selected, setSelected, round, sp, active, idle, deal, me, locked,
+  order, setOrder, selected, setSelected, round, sp, active, idle, deal, me, locked, landscape,
 }: {
   order: CardId[];
   setOrder: (o: CardId[]) => void;
@@ -65,9 +89,11 @@ export function Hand({
   me: number;
   /** no input while the deal is running */
   locked: boolean;
+  /** phone held sideways: one row of cards, height owned by CSS */
+  landscape: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
-  const [box, setBox] = useState({ w: 360, h: 640 });
+  const [box, setBox] = useState({ w: 360, h: 150, vh: 640 });
   const [drag, setDrag] = useState<{ id: CardId; x: number; y: number } | null>(null);
   const gesture = useRef<Gesture | null>(null);
   // live copies so pointer handlers never read stale props mid-gesture
@@ -76,12 +102,14 @@ export function Hand({
 
   useLayoutEffect(() => {
     const el = ref.current!;
-    const ro = new ResizeObserver(() => setBox({ w: el.clientWidth, h: window.innerHeight }));
+    const ro = new ResizeObserver(() => setBox({ w: el.clientWidth, h: el.clientHeight, vh: window.innerHeight }));
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
 
-  const { slots, cw, ch, height } = computeSlots(order.length, box.w, box.h);
+  const { slots, cw, ch, height } = landscape
+    ? landscapeSlots(order.length, box.w, box.h)
+    : computeSlots(order.length, box.w, box.vh);
   const plan = deal && deal.round === round ? deal : null;
   const elapsed = plan ? (performance.now() - plan.startedAt) / 1000 : Infinity;
   const dealing = !!plan && elapsed < plan.ready;
@@ -206,7 +234,7 @@ export function Hand({
     <div
       ref={ref}
       className={`hand ${active ? 'active' : ''} ${drag ? 'dragging' : ''} ${idle && !dealing ? 'idle' : ''} ${locked ? 'locked' : ''}`}
-      style={{ height, ['--cw' as string]: `${cw}px` }}
+      style={{ height: landscape ? undefined : height, ['--cw' as string]: `${cw}px` }}
       onPointerDown={onDown}
       onPointerMove={onMove}
       onPointerUp={onUp}

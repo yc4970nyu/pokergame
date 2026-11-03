@@ -1,5 +1,5 @@
 import { CardId, fullDeck, shuffle, sortCards, rankOf } from './cards';
-import { Combo, canBeat, identify, COMBO_NAMES } from './combos';
+import { Combo, canBeat, identify, isBomb, playableCombos, COMBO_NAMES } from './combos';
 
 export interface GameConfig {
   /** Cards each player is dealt (before the flipped card is added). 17 for 2 or 3 players. */
@@ -14,7 +14,7 @@ export const DEFAULT_CONFIG: GameConfig = { handSize: 17, losersLosePoints: true
 export interface Payment {
   seat: number;
   cards: number; // cards left in hand
-  over10: boolean; // more than 10 left → ×2
+  over10: boolean; // 10 or more left → ×2
   twos: number; // 2s left in hand → ×2 each
   tailTwo: boolean; // winner went out on a 2 or a pair of 2s → ×2 for everyone
   multiplier: number;
@@ -33,7 +33,7 @@ const RANK_TWO = 12;
 /**
  * 算钱：
  *  - 每个输家基础 = 手里剩的张数
- *  - 剩超过 10 张：×2
+ *  - 剩 10 张或更多：×2
  *  - 手里每剩一张 2：再 ×2（一张 ×2，两张 ×4 …）
  *  - 尾二：赢家最后出的是单张 2 或一对 2 → 所有人再 ×2
  */
@@ -44,12 +44,34 @@ export function settle(hands: CardId[][], winner: number, finalCombo: Combo): Se
   hands.forEach((hand, seat) => {
     if (seat === winner) return;
     const cards = hand.length;
-    const over10 = cards > 10;
+    const over10 = cards >= 10;
     const twos = hand.filter((c) => rankOf(c) === RANK_TWO).length;
     const multiplier = (over10 ? 2 : 1) * 2 ** twos * (tailTwo ? 2 : 1);
     payments.push({ seat, cards, over10, twos, tailTwo, multiplier, amount: cards * multiplier });
   });
   return { winner, tailTwo, payments, total: payments.reduce((a, p) => a + p.amount, 0) };
+}
+
+/** 一局里某个座位的表现 */
+export interface SeatRoundStats {
+  /** 牌权：其他人全不要，这一轮归他，由他重新开牌（不含开局的首攻） */
+  tricksWon: number;
+  /** 失误：手里有非炸弹的牌压得过，却选择了不要 */
+  misses: number;
+  /** 不要的总次数 */
+  passes: number;
+  cardsLeft: number;
+  twosLeft: number;
+  /** 这一局的收支，赢家为正 */
+  amount: number;
+}
+
+/** 一局打完后存档，整场比赛的历史由这些组成 */
+export interface RoundRecord {
+  round: number;
+  winner: number;
+  tailTwo: boolean;
+  seats: SeatRoundStats[];
 }
 
 export interface Seat {
@@ -75,7 +97,7 @@ export type LogEvent =
 export interface GameState {
   config: GameConfig;
   seats: Seat[];
-  phase: 'playing' | 'roundOver';
+  phase: 'playing' | 'roundOver' | 'matchOver';
   round: number;
   turn: number;
   /** The play currently on the table this trick (null = turn player leads freely) */
@@ -87,6 +109,14 @@ export interface GameState {
   winner: number | null;
   lastDeltas: number[] | null;
   lastSettlement: Settlement | null;
+  /** 本局至今，每人抢到的牌权次数 */
+  tricksWon: number[];
+  /** 本局至今，每人的失误次数 */
+  misses: number[];
+  /** 本局至今，每人说「不要」的次数 */
+  passes: number[];
+  /** 整场比赛每一局的存档，换局不清空 */
+  history: RoundRecord[];
   /** Monotonic counter; bumps on every change so clients can animate */
   seq: number;
   log: LogEvent[];
@@ -113,6 +143,10 @@ export function newGame(
     winner: null,
     lastDeltas: null,
     lastSettlement: null,
+    tricksWon: players.map(() => 0),
+    misses: players.map(() => 0),
+    passes: players.map(() => 0),
+    history: [],
     seq: 0,
     log: [],
   };
@@ -158,10 +192,15 @@ export function deal(prev: GameState, rand: () => number = Math.random): GameSta
     winner: null,
     lastDeltas: null,
     lastSettlement: null,
+    tricksWon: Array(n).fill(0),
+    misses: Array(n).fill(0),
+    passes: Array(n).fill(0),
     seq: prev.seq + 1,
     log: [{ kind: 'deal', flipped, flippedTo: lowestSeat, leader: lowestSeat }],
   };
 }
+
+const bump = (xs: number[], i: number) => xs.map((x, j) => (j === i ? x + 1 : x));
 
 /** Next seat (clockwise) that hasn't passed this trick. */
 function nextActive(state: GameState, from: number, passed: boolean[]): number {
@@ -203,6 +242,19 @@ export function play(state: GameState, seat: number, cards: CardId[]): GameState
     for (const p of settlement.payments) if (state.config.losersLosePoints) deltas[p.seat] = -p.amount;
     deltas[seat] = settlement.total;
     log.push({ kind: 'roundOver', winner: seat, deltas });
+    const record: RoundRecord = {
+      round: state.round,
+      winner: seat,
+      tailTwo: settlement.tailTwo,
+      seats: seats.map((s, i) => ({
+        tricksWon: state.tricksWon[i],
+        misses: state.misses[i],
+        passes: state.passes[i],
+        cardsLeft: s.hand.length,
+        twosLeft: s.hand.filter((c) => rankOf(c) === RANK_TWO).length,
+        amount: deltas[i],
+      })),
+    };
     return {
       ...state,
       seats: seats.map((s, i) => ({ ...s, score: s.score + deltas[i] })),
@@ -211,6 +263,7 @@ export function play(state: GameState, seat: number, cards: CardId[]): GameState
       winner: seat,
       lastDeltas: deltas,
       lastSettlement: settlement,
+      history: [...state.history, record],
       seq: state.seq + 1,
       log,
     };
@@ -220,7 +273,10 @@ export function play(state: GameState, seat: number, cards: CardId[]): GameState
   // Everyone else already passed → this seat wins the trick and leads again
   if (next === seat) {
     log.push({ kind: 'newTrick', leader: seat });
-    return { ...state, seats, lastPlay: null, passed: state.passed.map(() => false), turn: seat, seq: state.seq + 1, log };
+    return {
+      ...state, seats, lastPlay: null, passed: state.passed.map(() => false), turn: seat,
+      tricksWon: bump(state.tricksWon, seat), seq: state.seq + 1, log,
+    };
   }
   return { ...state, seats, lastPlay: { seat, combo }, turn: next, seq: state.seq + 1, log };
 }
@@ -231,17 +287,38 @@ export function pass(state: GameState, seat: number): GameState {
   if (!state.lastPlay) throw new GameError('你是这一轮的首家，必须出牌');
   const passed = state.passed.slice();
   passed[seat] = true;
+  // 失误 = 手里有非炸弹的牌压得过却不要。压不过、或只剩炸弹能压，都不算失误。
+  const couldHavePlayed = playableCombos(state.seats[seat].hand, state.lastPlay.combo).some((c) => !isBomb(c.type));
+  const passes = bump(state.passes, seat);
+  const misses = couldHavePlayed ? bump(state.misses, seat) : state.misses;
   const log: LogEvent[] = [{ kind: 'pass', seat }];
   const next = nextActive(state, seat, passed);
   // Back to the player who made the last play → trick over, they lead fresh
   if (next === state.lastPlay.seat) {
     log.push({ kind: 'newTrick', leader: next });
-    return { ...state, passed: passed.map(() => false), lastPlay: null, turn: next, seq: state.seq + 1, log };
+    return {
+      ...state, passed: passed.map(() => false), lastPlay: null, turn: next,
+      tricksWon: bump(state.tricksWon, next), passes, misses, seq: state.seq + 1, log,
+    };
   }
-  return { ...state, passed, turn: next, seq: state.seq + 1, log };
+  return { ...state, passed, turn: next, passes, misses, seq: state.seq + 1, log };
 }
 
 export function nextRound(state: GameState, rand: () => number = Math.random): GameState {
   if (state.phase !== 'roundOver') throw new GameError('这局还没结束');
   return deal(state, rand);
+}
+
+/** 结束比赛：停在计分板上。进行中的那一局不计分，也不进历史。 */
+export function endMatch(state: GameState): GameState {
+  if (state.phase === 'matchOver') return state;
+  return { ...state, phase: 'matchOver', seq: state.seq + 1, log: [] };
+}
+
+/** 新比赛：积分和历史清零，重新发牌。 */
+export function newMatch(state: GameState, rand: () => number = Math.random): GameState {
+  return deal(
+    { ...state, seats: state.seats.map((s) => ({ ...s, score: 0 })), history: [], round: 0 },
+    rand,
+  );
 }

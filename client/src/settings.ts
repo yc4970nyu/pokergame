@@ -47,3 +47,6 @@ export const springs = (s: Speed) => {
     off: false,
   };
 };
+
+/** The spring presets for the current animation speed. */
+export type Springs = ReturnType<typeof springs>;

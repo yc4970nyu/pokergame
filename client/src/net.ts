@@ -75,6 +75,8 @@ export const api = {
   setMax: (maxPlayers: 2 | 3) => socket.emit('room:setMax', { maxPlayers }),
   start: () => socket.emit('game:start'),
   next: () => socket.emit('game:next'),
+  end: () => socket.emit('game:end'),
+  newMatch: () => socket.emit('game:newMatch'),
   play: (cards: number[]) => withAck((cb) => socket.emit('game:play', { cards }, cb)),
   pass: () => withAck((cb) => socket.emit('game:pass', cb)),
 };

@@ -1,5 +1,5 @@
 import {
-  GameState, GameError, newGame, play, pass, nextRound, chooseBotMove, LogEvent,
+  GameState, GameError, newGame, play, pass, nextRound, endMatch, newMatch, chooseBotMove, LogEvent,
   RoomView, CardId, COMBO_NAMES,
 } from '../../shared/src/index';
 
@@ -185,6 +185,26 @@ export class RoomManager {
     this.touch(room);
   }
 
+  /** 结束比赛，所有人停在计分板上 */
+  end(playerId: string) {
+    const room = this.roomOf(playerId);
+    if (!room?.game) throw new GameError('没有进行中的游戏');
+    if (room.game.phase === 'matchOver') return;
+    room.game = endMatch(room.game);
+    room.lastEvent = '比赛结束';
+    this.touch(room);
+  }
+
+  /** 积分清零，重新开一场 */
+  newMatch(playerId: string) {
+    const room = this.roomOf(playerId);
+    if (!room?.game) throw new GameError('没有进行中的游戏');
+    room.game = newMatch(room.game);
+    room.dealtAt = Date.now();
+    room.lastEvent = describe(room, room.game.log);
+    this.touch(room);
+  }
+
   /** Called after every change: schedules bot / auto-play moves. */
   scheduleBots(room: Room) {
     if (room.botTimer) clearTimeout(room.botTimer);
@@ -240,7 +260,8 @@ export class RoomManager {
             winner: g.winner,
             lastDeltas: g.lastDeltas,
             settlement: g.lastSettlement,
-            revealedHands: g.phase === 'roundOver' ? g.seats.map((s) => s.hand) : null,
+            revealedHands: g.phase === 'playing' ? null : g.seats.map((s) => s.hand),
+            history: g.history,
             seq: g.seq,
             lastEvent: room.lastEvent,
             yourSeat,

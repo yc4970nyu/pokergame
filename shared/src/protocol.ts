@@ -1,6 +1,6 @@
 import type { CardId } from './cards';
 import type { Combo } from './combos';
-import type { Settlement } from './game';
+import type { Settlement, RoundRecord } from './game';
 
 /** What one client is allowed to see about a room. Other players' hands are hidden. */
 export interface RoomView {
@@ -23,7 +23,7 @@ export interface PlayerView {
 }
 
 export interface GameView {
-  phase: 'playing' | 'roundOver';
+  phase: 'playing' | 'roundOver' | 'matchOver';
   round: number;
   turn: number;
   lastPlay: { seat: number; combo: Combo } | null;
@@ -36,6 +36,8 @@ export interface GameView {
   settlement: Settlement | null;
   /** Remaining hands, revealed only when the round is over */
   revealedHands: CardId[][] | null;
+  /** 这场比赛每一局的存档，计分板和数据分析用 */
+  history: RoundRecord[];
   seq: number;
   lastEvent: string | null;
   yourSeat: number;
@@ -53,6 +55,10 @@ export interface ClientToServer {
   'game:play': (p: { cards: CardId[] }, ack: (r: Ack) => void) => void;
   'game:pass': (ack: (r: Ack) => void) => void;
   'game:next': () => void;
+  /** 结束比赛，停在计分板上 */
+  'game:end': () => void;
+  /** 清零积分，开一场新比赛 */
+  'game:newMatch': () => void;
 }
 
 export interface ServerToClient {
