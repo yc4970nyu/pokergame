@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import type { ReactNode } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { RoomView } from '../../shared/src/protocol';
 import type { RoundRecord } from '../../shared/src/game';
 import { api } from './net';
@@ -83,207 +83,295 @@ export function ConfirmEnd({ onYes, onNo, sp }: { onYes: () => void; onNo: () =>
   );
 }
 
-/** 每个座位一个颜色，所有图表通用（Apple 系统色） */
-const SEAT_COLORS = ['#007AFF', '#FF9500', '#AF52DE'];
+/** 三位玩家的固定颜色，所有图表通用 */
+const SEAT_COLORS = ['#5268C4', '#438579', '#A77B45'];
 const colorOf = (seat: number) => SEAT_COLORS[seat % SEAT_COLORS.length];
+/** 每位玩家一个标记形状，颜色之外再辅助区分 */
+const SHAPES = ['circle', 'square', 'diamond'] as const;
+const shapeOf = (seat: number) => SHAPES[seat % SHAPES.length];
 const signed = (x: number) => (x > 0 ? `+${x}` : x < 0 ? `−${Math.abs(x)}` : '0');
+const ease = [0.22, 1, 0.36, 1] as const;
 
-/** 比赛结束：Apple 风格的数据总结 */
+function useWidth<T extends HTMLElement>() {
+  const ref = useRef<T>(null);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const read = () => setSize((s) => (s.w === el.clientWidth && s.h === el.clientHeight ? s : { w: el.clientWidth, h: el.clientHeight }));
+    read();
+    const ro = new ResizeObserver(read);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, size.w, size.h] as const;
+}
+
+/** 比赛结束：数据总结（参考 Tremor Blocks 的卡片和图表样式） */
 export function Scoreboard({ room, sp }: { room: RoomView; sp: Springs }) {
   const g = room.game!;
   const history = g.history ?? [];
   const rows = matchStats(room, history);
   const rounds = history.length;
   const bySeat = [...rows].sort((a, b) => a.seat - b.seat);
-  let k = 0;
-  const card = (title: string, sub: string | null, children: ReactNode, wide = false) => (
-    <motion.section
-      className={`sb-card ${wide ? 'wide' : ''}`}
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ ...sp.push, delay: 0.1 + k++ * 0.06 }}
-    >
-      <header className="sb-card-head">
-        <h3>{title}</h3>
-        {sub && <span>{sub}</span>}
-      </header>
-      {children}
-    </motion.section>
-  );
+
+  const pages: { key: string; title: string; desc: string; cls: string; body: ReactNode }[] = [
+    { key: 'result', title: '比赛结果', desc: `共 ${rounds} 局`, cls: 'c-result', body: <Result rows={rows} rounds={rounds} /> },
+    { key: 'trend', title: '积分走势', desc: '每局结束后的累计积分', cls: 'c-trend', body: <Trend players={bySeat} rounds={rounds} /> },
+    { key: 'wins', title: '胜场', desc: rounds > 1 ? '每一局由谁赢下' : '本场只打了一局', cls: 'c-small', body: <Wins players={bySeat} history={history} rounds={rounds} /> },
+    { key: 'tricks', title: '牌权', desc: '其他人都不要、这一轮归你重新出（开局首攻不算）', cls: 'c-small', body: <Tricks players={bySeat} /> },
+    { key: 'swing', title: '单局输赢', desc: '每人最好和最差的一局', cls: 'c-small', body: <Swing players={bySeat} /> },
+    { key: 'left', title: '输的时候平均剩牌', desc: '剩得越少，输得越少', cls: 'c-small', body: <Left players={bySeat} /> },
+  ];
+
+  // 手机：左右滑动，一页一张卡
+  const track = useRef<HTMLDivElement>(null);
+  const [page, setPage] = useState(0);
+  const onScroll = () => {
+    const el = track.current;
+    if (!el) return;
+    const card = el.firstElementChild as HTMLElement | null;
+    const step = card ? card.offsetWidth + parseFloat(getComputedStyle(el).columnGap || '0') : el.clientWidth;
+    setPage(Math.round(el.scrollLeft / Math.max(1, step)));
+  };
+  const goTo = (i: number) => {
+    const el = track.current;
+    const card = el?.children[i] as HTMLElement | undefined;
+    if (el && card) el.scrollTo({ left: card.offsetLeft - el.offsetLeft - parseFloat(getComputedStyle(el).paddingLeft), behavior: 'smooth' });
+  };
 
   return (
-    <motion.div className="overlay sb-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25 }}>
+    <motion.div className="overlay ms-overlay" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.2 }}>
       <motion.div
-        className="sb"
+        className="ms"
         role="dialog"
-        aria-label="比赛数据"
-        initial={{ y: 40, opacity: 0 }}
+        aria-label="比赛数据总结"
+        initial={{ y: 24, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={sp.card}
       >
-        <header className="sb-head">
-          <span className="sb-eyebrow">比赛总结</span>
-          <h2 className="sb-title">比赛结束</h2>
-          <span className="sb-sub">共 {rounds} 局 · {rows.length} 位玩家</span>
+        <header className="ms-head">
+          <p className="ms-eyebrow">比赛总结</p>
+          <h2 className="ms-title">比赛结束</h2>
+          <p className="ms-sub">共 {rounds} 局 · {rows.length} 位玩家</p>
         </header>
 
         {rounds === 0 ? (
-          <p className="sb-empty">这场还没打完一局，没有数据。</p>
+          <div className="ms-empty ms-card">这场还没打完一局，没有数据。</div>
         ) : (
-          <div className="sb-grid">
-            {card('排名', '总积分 · 胜场', <Ranking rows={rows} rounds={rounds} />)}
-            {card('积分走势', '每局结束后的累计积分', <TrendChart players={bySeat} rounds={rounds} />)}
-            {card('胜场', `共 ${rounds} 局`, <WinRings players={bySeat} rounds={rounds} />)}
-            {card('牌权', '总数 · 场均 · 单局范围', <TrickRanges players={bySeat} />)}
-            {card('单局输赢', '最好的一局 · 最差的一局', <BestWorst players={bySeat} />)}
-            {card('输的时候平均剩牌', '张数越少，输得越少', <LeftBars players={bySeat} />)}
-            <p className="sb-note">牌权：其他人都不要，这一轮归你重新出（开局首攻不算）。</p>
-          </div>
+          <>
+            <div className="ms-grid" ref={track} onScroll={onScroll}>
+              {pages.map((p, i) => (
+                <motion.section
+                  key={p.key}
+                  className={`ms-card ${p.cls}`}
+                  aria-label={p.title}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, delay: 0.05 + i * 0.05, ease }}
+                >
+                  <header className="ms-card-head">
+                    <h3>{p.title}</h3>
+                    <p>{p.desc}</p>
+                  </header>
+                  <div className="ms-card-body">{p.body}</div>
+                </motion.section>
+              ))}
+            </div>
+            <nav className="ms-dots" aria-label="切换数据页">
+              {pages.map((p, i) => (
+                <button key={p.key} className={i === page ? 'on' : ''} onClick={() => goTo(i)} aria-label={p.title} aria-current={i === page}>
+                  <span>{p.title}</span>
+                </button>
+              ))}
+            </nav>
+          </>
         )}
 
-        <div className="sb-actions">
-          <button className="sb-btn plain" onClick={api.leave}>离开房间</button>
-          <button className="sb-btn fill" onClick={api.newMatch}>再来一场</button>
+        <div className="ms-actions">
+          <button className="ms-btn secondary" onClick={api.leave}>离开房间</button>
+          <button className="ms-btn primary" onClick={api.newMatch}>再来一场</button>
         </div>
       </motion.div>
     </motion.div>
   );
 }
 
-function Name({ p }: { p: PlayerStats }) {
+function Marker({ seat, size = 10 }: { seat: number; size?: number }) {
+  const c = colorOf(seat);
+  const sh = shapeOf(seat);
   return (
-    <span className="sb-name">
-      <i style={{ background: colorOf(p.seat) }} />
-      <span className="sb-name-t">{p.name}</span>
-      {p.you && <em>你</em>}
+    <svg className="ms-marker" width={size} height={size} viewBox="0 0 10 10" aria-hidden>
+      {sh === 'circle' && <circle cx="5" cy="5" r="4.5" fill={c} />}
+      {sh === 'square' && <rect x="0.8" y="0.8" width="8.4" height="8.4" rx="1.6" fill={c} />}
+      {sh === 'diamond' && <rect x="1.8" y="1.8" width="6.4" height="6.4" rx="1" fill={c} transform="rotate(45 5 5)" />}
+    </svg>
+  );
+}
+
+function Who({ p }: { p: PlayerStats }) {
+  return (
+    <span className="ms-who">
+      <Marker seat={p.seat} />
+      <span className="ms-who-name">{p.name}</span>
+      {p.you && <span className="ms-badge">你</span>}
     </span>
   );
 }
 
-/** 排名：大号积分 + 胜场 */
-function Ranking({ rows, rounds }: { rows: PlayerStats[]; rounds: number }) {
+/** 比赛结果：冠军 + 排名表（整页最突出） */
+function Result({ rows, rounds }: { rows: PlayerStats[]; rounds: number }) {
+  const champ = rows[0];
+  const tie = rows.length > 1 && rows[1].score === champ.score;
   return (
-    <ol className="sb-rank">
-      {rows.map((r, i) => (
-        <li key={r.seat}>
-          <span className="sb-pos">{i + 1}</span>
-          <div className="sb-rank-mid">
-            <Name p={r} />
-            <span className="sb-dim">胜 {r.wins} 局 / {rounds}</span>
-          </div>
-          <b className={`sb-score ${r.score > 0 ? 'pos' : r.score < 0 ? 'neg' : ''}`}>{signed(r.score)}</b>
-        </li>
-      ))}
-    </ol>
+    <div className="ms-result">
+      <div className="ms-champ">
+        <span className="ms-label">{tie ? '并列第一' : '冠军'}</span>
+        <div className="ms-champ-row">
+          <span className="ms-champ-name"><Marker seat={champ.seat} size={14} />{champ.name}{champ.you && <span className="ms-badge">你</span>}</span>
+          <span className="ms-kpi">{signed(champ.score)}</span>
+        </div>
+        <span className="ms-muted">赢下 {champ.wins} / {rounds} 局</span>
+      </div>
+      <table className="ms-table">
+        <thead>
+          <tr><th className="l">排名</th><th className="l">玩家</th><th>胜场</th><th>总积分</th></tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={r.seat} className={r.you ? 'me' : ''}>
+              <td className="l num">{i + 1}</td>
+              <td className="l"><Who p={r} /></td>
+              <td className="num">{r.wins}</td>
+              <td className="num strong">{signed(r.score)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
-/** 折线图：每局后的累计积分 */
-function TrendChart({ players, rounds }: { players: PlayerStats[]; rounds: number }) {
-  const W = 340, H = 170, L = 34, R = 12, T = 12, B = 24;
+/** 积分走势：折线图，点一下 / 悬停看每局的数值 */
+function Trend({ players, rounds }: { players: PlayerStats[]; rounds: number }) {
+  const [box, W, boxH] = useWidth<HTMLDivElement>();
+  const [hover, setHover] = useState<number | null>(null);
+  const H = Math.max(140, Math.min(300, boxH || 220)), L = 40, R = 14, T = 12, B = 28;
   const all = players.flatMap((p) => p.series);
   let lo = Math.min(0, ...all), hi = Math.max(0, ...all);
-  if (lo === hi) { lo -= 1; hi += 1; }
-  const pad = (hi - lo) * 0.08;
-  lo -= pad; hi += pad;
-  const x = (i: number) => L + (i / Math.max(1, rounds)) * (W - L - R);
-  const y = (v: number) => T + ((hi - v) / (hi - lo)) * (H - T - B);
+  if (lo === hi) { lo -= 5; hi += 5; }
   const ticks = niceTicks(lo, hi);
-  const xStep = Math.max(1, Math.ceil(rounds / 6));
+  lo = Math.min(lo, ticks[0]); hi = Math.max(hi, ticks[ticks.length - 1]);
+  const iw = Math.max(1, W - L - R);
+  const x = (i: number) => L + (i / Math.max(1, rounds)) * iw;
+  const y = (v: number) => T + ((hi - v) / (hi - lo)) * (H - T - B);
+  const xStep = Math.max(1, Math.ceil(rounds / Math.max(2, Math.floor(iw / 44))));
   const xs = Array.from({ length: rounds + 1 }, (_, i) => i).filter((i) => i % xStep === 0 || i === rounds);
+  const pick = (clientX: number, el: Element) => {
+    const r = el.getBoundingClientRect();
+    const i = Math.round(((clientX - r.left - L) / iw) * rounds);
+    setHover(Math.max(0, Math.min(rounds, i)));
+  };
+  const hi_ = hover ?? rounds;
+  const sorted = [...players].sort((a, b) => b.series[hi_] - a.series[hi_]);
+
   return (
-    <div className="sb-chart">
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="累计积分折线图">
-        {ticks.map((t) => (
-          <g key={t}>
-            <line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className={t === 0 ? 'axis0' : 'grid'} />
-            <text x={L - 6} y={y(t) + 3.5} textAnchor="end" className="tick">{t}</text>
-          </g>
-        ))}
-        {xs.map((i) => (
-          <text key={i} x={x(i)} y={H - 6} textAnchor="middle" className="tick">{i === 0 ? '开局' : i}</text>
-        ))}
-        {players.map((p, pi) => {
-          const d = p.series.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
-          const last = p.series[p.series.length - 1];
-          return (
-            <g key={p.seat}>
-              <motion.path
-                d={d}
-                fill="none"
-                stroke={colorOf(p.seat)}
-                strokeWidth={2.6}
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                initial={{ pathLength: 0 }}
-                animate={{ pathLength: 1 }}
-                transition={{ duration: 0.9, delay: 0.25 + pi * 0.12, ease: [0.22, 1, 0.36, 1] }}
-              />
-              {rounds <= 12 && p.series.slice(1, -1).map((v, i) => (
-                <circle key={i} cx={x(i + 1)} cy={y(v)} r={2.2} fill={colorOf(p.seat)} opacity={0.55} />
-              ))}
-              <motion.circle
-                cx={x(rounds)} cy={y(last)} r={4.5} fill="#fff" stroke={colorOf(p.seat)} strokeWidth={2.6}
-                initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ delay: 1 + pi * 0.12 }}
-              />
-            </g>
-          );
-        })}
-      </svg>
-      <div className="sb-legend">
-        {players.map((p) => (
-          <span key={p.seat}><Name p={p} /><b className="sb-num">{signed(p.score)}</b></span>
-        ))}
+    <div className="ms-trend">
+      <ul className="ms-legend">
+        {players.map((p) => <li key={p.seat}><Who p={p} /></li>)}
+      </ul>
+      <div className="ms-chart" ref={box}>
+        {W > 0 && (
+          <svg
+            style={{ position: 'absolute', inset: 0 }}
+            width={W} height={H} role="img" aria-label="累计积分折线图"
+            onPointerMove={(e) => pick(e.clientX, e.currentTarget)}
+            onPointerDown={(e) => pick(e.clientX, e.currentTarget)}
+            onPointerLeave={(e) => { if (e.pointerType === 'mouse') setHover(null); }}
+          >
+            {ticks.map((t) => (
+              <g key={t}>
+                <line x1={L} x2={W - R} y1={y(t)} y2={y(t)} className={t === 0 ? 'zero' : 'grid'} />
+                <text x={L - 8} y={y(t) + 4} textAnchor="end" className="tick">{signed(t)}</text>
+              </g>
+            ))}
+            {xs.map((i) => (
+              <text key={i} x={x(i)} y={H - 8} textAnchor="middle" className="tick">{i === 0 ? '开局' : `第${i}局`}</text>
+            ))}
+            {hover !== null && <line x1={x(hover)} x2={x(hover)} y1={T} y2={H - B} className="cursor" />}
+            {players.map((p, pi) => {
+              const d = p.series.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+              const at = hover ?? rounds;
+              return (
+                <g key={p.seat}>
+                  <motion.path
+                    d={d} fill="none" stroke={colorOf(p.seat)} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
+                    initial={{ pathLength: 0 }} animate={{ pathLength: 1 }}
+                    transition={{ duration: 0.8, delay: 0.2 + pi * 0.08, ease }}
+                  />
+                  <PointMark seat={p.seat} cx={x(at)} cy={y(p.series[at])} />
+                </g>
+              );
+            })}
+          </svg>
+        )}
+      </div>
+      <div className="ms-readout" aria-live="polite">
+        <span className="ms-label">{hover === null || hover === rounds ? '最终' : hover === 0 ? '开局' : `第 ${hover} 局后`}</span>
+        <ul>
+          {sorted.map((p) => (
+            <li key={p.seat}><Who p={p} /><span className="num strong">{signed(p.series[hi_])}</span></li>
+          ))}
+        </ul>
       </div>
     </div>
   );
 }
 
+function PointMark({ seat, cx, cy }: { seat: number; cx: number; cy: number }) {
+  const c = colorOf(seat);
+  const sh = shapeOf(seat);
+  const common = { fill: '#fff', stroke: c, strokeWidth: 2 };
+  if (sh === 'circle') return <circle cx={cx} cy={cy} r={4.5} {...common} />;
+  if (sh === 'square') return <rect x={cx - 4.2} y={cy - 4.2} width={8.4} height={8.4} rx={1.5} {...common} />;
+  return <rect x={cx - 3.6} y={cy - 3.6} width={7.2} height={7.2} rx={1} transform={`rotate(45 ${cx} ${cy})`} {...common} />;
+}
+
 function niceTicks(lo: number, hi: number): number[] {
-  const span = hi - lo;
-  const raw = span / 4;
+  const raw = (hi - lo) / 4;
   const mag = 10 ** Math.floor(Math.log10(raw));
-  const step = [1, 2, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? raw;
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? raw;
   const out: number[] = [];
-  for (let t = Math.ceil(lo / step) * step; t <= hi; t += step) out.push(Math.round(t));
-  if (!out.includes(0)) out.push(0);
+  for (let t = Math.floor(lo / step) * step; t <= Math.ceil(hi / step) * step + 1e-9; t += step) out.push(Math.round(t));
   return out;
 }
 
-/** 胜场：Apple Fitness 风格的同心圆环 */
-function WinRings({ players, rounds }: { players: PlayerStats[]; rounds: number }) {
-  const S = 150, SW = 15, GAP = 3;
+/** 胜场：多局用 Tracker（每格一局，颜色是赢家），一局只给数字 */
+function Wins({ players, history, rounds }: { players: PlayerStats[]; history: RoundRecord[]; rounds: number }) {
+  const bySeat = new Map(players.map((p) => [p.seat, p]));
   return (
-    <div className="sb-rings">
-      <svg viewBox={`0 0 ${S} ${S}`} role="img" aria-label="胜场圆环">
-        {players.map((p, i) => {
-          const r = S / 2 - SW / 2 - i * (SW + GAP);
-          const c = 2 * Math.PI * r;
-          const frac = rounds ? p.wins / rounds : 0;
-          return (
-            <g key={p.seat} transform={`rotate(-90 ${S / 2} ${S / 2})`}>
-              <circle cx={S / 2} cy={S / 2} r={r} fill="none" stroke={colorOf(p.seat)} strokeOpacity={0.16} strokeWidth={SW} />
-              {frac > 0 && (
-                <motion.circle
-                  cx={S / 2} cy={S / 2} r={r} fill="none" stroke={colorOf(p.seat)} strokeWidth={SW} strokeLinecap="round"
-                  strokeDasharray={c}
-                  initial={{ strokeDashoffset: c }}
-                  animate={{ strokeDashoffset: c * (1 - frac) }}
-                  transition={{ duration: 1.1, delay: 0.3 + i * 0.12, ease: [0.22, 1, 0.36, 1] }}
-                />
-              )}
-            </g>
-          );
-        })}
-      </svg>
-      <ul className="sb-ring-legend">
-        {players.map((p) => (
+    <div className="ms-wins">
+      {rounds > 1 && (
+        <div className="ms-tracker" role="img" aria-label="每局赢家">
+          {history.map((r, i) => (
+            <motion.span
+              key={i}
+              title={`第 ${i + 1} 局 · ${bySeat.get(r.winner)?.name ?? ''}`}
+              style={{ background: colorOf(r.winner) }}
+              initial={{ scaleY: 0.3, opacity: 0 }}
+              animate={{ scaleY: 1, opacity: 1 }}
+              transition={{ duration: 0.3, delay: 0.25 + i * 0.03, ease }}
+            />
+          ))}
+        </div>
+      )}
+      {rounds > 1 && <div className="ms-axis"><span>第 1 局</span><span>第 {rounds} 局</span></div>}
+      <ul className="ms-list">
+        {[...players].sort((a, b) => b.wins - a.wins).map((p) => (
           <li key={p.seat}>
-            <Name p={p} />
-            <span className="sb-big" style={{ color: colorOf(p.seat) }}>
-              {p.wins}<small>胜</small>
-            </span>
-            <span className="sb-dim">{rounds ? Math.round((p.wins / rounds) * 100) : 0}% · 输 {rounds - p.wins} 局</span>
+            <Who p={p} />
+            <span className="ms-muted">{Math.round((p.wins / rounds) * 100)}%</span>
+            <span className="num strong">{p.wins} 胜</span>
           </li>
         ))}
       </ul>
@@ -291,98 +379,84 @@ function WinRings({ players, rounds }: { players: PlayerStats[]; rounds: number 
   );
 }
 
-/** 牌权：单局最少–最多的范围条 + 场均标记 + 总数 */
-function TrickRanges({ players }: { players: PlayerStats[] }) {
-  const max = Math.max(1, ...players.map((p) => p.tricksMax));
-  const pct = (v: number) => `${(v / max) * 100}%`;
+/** Tremor 风格的 BarList：浅色条 + 名字在条里 + 数值在右 */
+function BarList({ items }: { items: { p: PlayerStats; value: number; label: string; sub?: string }[] }) {
+  const max = Math.max(1e-9, ...items.map((x) => x.value));
   return (
-    <div className="sb-ranges">
-      {players.map((p, i) => (
-        <div className="sb-range-row" key={p.seat}>
-          <div className="sb-range-top">
-            <Name p={p} />
-            <span className="sb-dim">场均 {one(p.tricksAvg)} · 单局 {p.tricksMin === p.tricksMax ? p.tricksMin : `${p.tricksMin}–${p.tricksMax}`}</span>
-            <b className="sb-num" style={{ color: colorOf(p.seat) }}>{p.tricks}<small>次</small></b>
-          </div>
-          <div className="sb-track">
+    <ul className="ms-barlist">
+      {items.map(({ p, value, label, sub }, i) => (
+        <li key={p.seat}>
+          <div className="ms-bar">
             <motion.i
-              className="sb-span"
-              style={{ left: pct(p.tricksMin), width: `max(10px, ${pct(p.tricksMax - p.tricksMin)})`, background: colorOf(p.seat) }}
-              initial={{ scaleX: 0, opacity: 0 }}
-              animate={{ scaleX: 1, opacity: 1 }}
-              transition={{ duration: 0.6, delay: 0.3 + i * 0.1, ease: [0.22, 1, 0.36, 1] }}
+              style={{ width: `${Math.max(value > 0 ? 4 : 0, (value / max) * 100)}%`, background: colorOf(p.seat) }}
+              initial={{ scaleX: 0 }} animate={{ scaleX: 1 }}
+              transition={{ duration: 0.6, delay: 0.25 + i * 0.06, ease }}
             />
-            <motion.i
-              className="sb-avg"
-              style={{ left: pct(p.tricksAvg), borderColor: colorOf(p.seat) }}
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              transition={{ ...{ type: 'spring', stiffness: 500, damping: 26 }, delay: 0.7 + i * 0.1 }}
-            />
+            <span className="ms-bar-label"><Who p={p} /></span>
           </div>
-        </div>
+          <span className="ms-bar-val">
+            <span className="num strong">{label}</span>
+            {sub && <span className="ms-muted">{sub}</span>}
+          </span>
+        </li>
       ))}
-      <div className="sb-axis"><span>0</span><span>{max}</span></div>
-    </div>
+    </ul>
   );
 }
 
-/** 单局输赢：以 0 为中线，左边最差、右边最好 */
-function BestWorst({ players }: { players: PlayerStats[] }) {
+function Tricks({ players }: { players: PlayerStats[] }) {
+  const items = [...players].sort((a, b) => b.tricks - a.tricks).map((p) => ({
+    p,
+    value: p.tricks,
+    label: `${p.tricks} 次`,
+    sub: `场均 ${one(p.tricksAvg)} · 单局 ${p.tricksMin === p.tricksMax ? p.tricksMin : `${p.tricksMin}–${p.tricksMax}`}`,
+  }));
+  return <BarList items={items} />;
+}
+
+/** 单局输赢：以 0 为中线，右边最好的一局（实色），左边最差的一局（浅色） */
+function Swing({ players }: { players: PlayerStats[] }) {
   const m = Math.max(1, ...players.flatMap((p) => [Math.abs(p.best), Math.abs(p.worst)]));
-  const bar = (v: number, delay: number) => (
+  const seg = (v: number, seat: number, light: boolean, delay: number) => (
     <motion.i
-      className={`sb-dv ${v >= 0 ? 'pos' : 'neg'}`}
-      style={{ width: `${(Math.abs(v) / m) * 50}%`, [v >= 0 ? 'left' : 'right']: '50%' }}
-      initial={{ scaleX: 0 }}
-      animate={{ scaleX: 1 }}
-      transition={{ duration: 0.6, delay, ease: [0.22, 1, 0.36, 1] }}
+      className={v >= 0 ? 'r' : 'l'}
+      style={{ width: `${(Math.abs(v) / m) * 50}%`, background: colorOf(seat), opacity: light ? 0.35 : 1 }}
+      initial={{ scaleX: 0 }} animate={{ scaleX: 1 }}
+      transition={{ duration: 0.6, delay, ease }}
     />
   );
   return (
-    <div className="sb-div">
-      {players.map((p, i) => (
-        <div className="sb-div-row" key={p.seat}>
-          <div className="sb-range-top">
-            <Name p={p} />
-            <span className="sb-pair">
-              <b className="sb-num neg">{signed(p.worst)}</b>
-              <b className="sb-num pos">{signed(p.best)}</b>
-            </span>
-          </div>
-          <div className="sb-div-track">
-            {bar(p.worst, 0.3 + i * 0.1)}
-            {p.best !== p.worst && bar(p.best, 0.38 + i * 0.1)}
-            <span className="sb-zero" />
-          </div>
-        </div>
-      ))}
-      <div className="sb-axis three"><span>最差</span><span>0</span><span>最好</span></div>
+    <div className="ms-swing">
+      <ul>
+        {players.map((p, i) => (
+          <li key={p.seat}>
+            <div className="ms-swing-top">
+              <Who p={p} />
+              <span className="ms-swing-vals">
+                <span><span className="ms-muted">最差</span> <span className="num">{signed(p.worst)}</span></span>
+                <span><span className="ms-muted">最好</span> <span className="num strong">{signed(p.best)}</span></span>
+              </span>
+            </div>
+            <div className="ms-swing-track">
+              {seg(p.worst, p.seat, true, 0.25 + i * 0.06)}
+              {p.best !== p.worst && seg(p.best, p.seat, false, 0.3 + i * 0.06)}
+              <span className="ms-zero" />
+            </div>
+          </li>
+        ))}
+      </ul>
+      <div className="ms-axis three"><span>{signed(-m)}</span><span>0</span><span>{signed(m)}</span></div>
     </div>
   );
 }
 
-/** 输的时候平均剩几张 */
-function LeftBars({ players }: { players: PlayerStats[] }) {
-  const max = Math.max(1, ...players.map((p) => p.avgLeft));
-  return (
-    <div className="sb-bars">
-      {players.map((p, i) => (
-        <div className="sb-bar-row" key={p.seat}>
-          <Name p={p} />
-          <div className="sb-bar-track">
-            {p.lostRounds > 0 && (
-              <motion.i
-                style={{ width: `${(p.avgLeft / max) * 100}%`, background: colorOf(p.seat) }}
-                initial={{ scaleX: 0 }}
-                animate={{ scaleX: 1 }}
-                transition={{ duration: 0.6, delay: 0.3 + i * 0.1, ease: [0.22, 1, 0.36, 1] }}
-              />
-            )}
-          </div>
-          <b className="sb-num">{p.lostRounds > 0 ? <>{one(p.avgLeft)}<small>张</small></> : <small>没输过</small>}</b>
-        </div>
-      ))}
-    </div>
-  );
+function Left({ players }: { players: PlayerStats[] }) {
+  const items = [...players].sort((a, b) => a.avgLeft - b.avgLeft).map((p) => ({
+    p,
+    value: p.lostRounds ? p.avgLeft : 0,
+    label: p.lostRounds ? `${one(p.avgLeft)} 张` : '没输过',
+    sub: p.lostRounds ? `输了 ${p.lostRounds} 局` : undefined,
+  }));
+  return <BarList items={items} />;
 }
+
