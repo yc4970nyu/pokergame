@@ -1,14 +1,24 @@
-import { CardId, fullDeck, shuffle, sortCards, rankOf, cardLabel } from './cards';
-import { Combo, canBeat, identify, isBomb, playableCombos, COMBO_NAMES } from './combos';
+import { CardId, face, fullDeck, shuffle, sortCards, rankOf, cardLabel } from './cards';
+import { Combo, allowedCombo, canBeat, identify, isBomb, playableCombos, COMBO_NAMES } from './combos';
 
 export interface GameConfig {
   /** Cards each player is dealt (before the flipped card is added). 17 for 2 or 3 players. */
   handSize: number;
+  /** 1 副牌（2、3 人）或 2 副牌（4 人）。两副牌时多出来的牌随机烧掉。 */
+  decks: 1 | 2;
+  /** 有人手里的 2 达到这个数量就作废重发 */
+  redealTwos: number;
   /** Losers also lose the cards they're left with (zero-sum). If false, only the winner scores. */
   losersLosePoints: boolean;
 }
 
-export const DEFAULT_CONFIG: GameConfig = { handSize: 17, losersLosePoints: true };
+export const DEFAULT_CONFIG: GameConfig = { handSize: 17, decks: 1, redealTwos: 4, losersLosePoints: true };
+/**
+ * 四人局：两副牌 104 张。翻一张，每人 25 张，剩下 3 张随机烧掉（谁都不知道是哪三张）。
+ * 先手拿到翻出来的那张，所以是 26 张。四张 2 在两副牌里太常见，改成拿到 6 张 2 才重发（概率约 1%，和三人局差不多少见）。
+ */
+export const CONFIG_4P: GameConfig = { handSize: 25, decks: 2, redealTwos: 6, losersLosePoints: true };
+export const configFor = (players: number): GameConfig => (players >= 4 ? CONFIG_4P : DEFAULT_CONFIG);
 
 /** How one loser's payment was worked out, for the result screen */
 export interface Payment {
@@ -120,8 +130,8 @@ export interface GameState {
   history: RoundRecord[];
   /** 第几次发牌（重发也算一次），客户端用它触发发牌动画 */
   dealNo: number;
-  /** 开局第一手必须带上的牌（先出那个人手里最小的牌，一般是 ♣3）；出过第一手后为 null */
-  mustInclude: CardId | null;
+  /** 开局第一手必须带上的那张脸（0..51，先出那个人手里最小的牌，一般是 ♣3）；出过第一手后为 null */
+  mustInclude: number | null;
   /** 有人拿到四张 2：这把作废，等服务器重新洗牌发牌。null = 正常 */
   redealSeat: number | null;
   /** Monotonic counter; bumps on every change so clients can animate */
@@ -133,10 +143,10 @@ export class GameError extends Error {}
 
 export function newGame(
   players: { id: string; name: string; isBot: boolean }[],
-  config: GameConfig = DEFAULT_CONFIG,
+  config: GameConfig = configFor(players.length),
   rand: () => number = Math.random,
 ): GameState {
-  if (players.length < 2 || players.length > 3) throw new GameError('大老二需要 2 或 3 名玩家');
+  if (players.length < 2 || players.length > 4) throw new GameError('大老二需要 2 到 4 名玩家');
   const state: GameState = {
     config,
     seats: players.map((p) => ({ ...p, hand: [], score: 0 })),
@@ -173,25 +183,19 @@ export function newGame(
  */
 export function deal(prev: GameState, rand: () => number = Math.random, isRedeal = false): GameState {
   const n = prev.seats.length;
-  const deck = shuffle(fullDeck(), rand);
+  const deck = shuffle(fullDeck(prev.config.decks), rand);
   const flipped = deck[0];
   const rest = deck.slice(1);
+  // 两副牌：发完 4×25 张后剩下的 3 张就是烧掉的，没人知道是哪三张
   const hands: CardId[][] = prev.seats.map((_, i) => rest.slice(i * prev.config.handSize, (i + 1) * prev.config.handSize));
 
-  let lowestSeat = 0;
-  let lowest = Infinity;
-  hands.forEach((h, i) => {
-    const m = Math.min(...h);
-    if (m < lowest) {
-      lowest = m;
-      lowestSeat = i;
-    }
-  });
+  const lowestSeat = pickLeader(hands);
   hands[lowestSeat].push(flipped);
-  // 第一手必须带上先出那个人手里最小的牌（发了 ♣3 就是 ♣3）
-  const mustInclude = Math.min(...hands[lowestSeat]);
-  // 有人拿到四张 2 → 这把作废，重新洗牌
-  const fourTwos = hands.findIndex((h) => h.filter((c) => rankOf(c) === RANK_TWO).length === 4);
+  // 第一手必须带上先出那个人手里最小的那张脸（一般是 ♣3；两副牌里谁有哪张 ♣3 都行）
+  const mustInclude = Math.min(...hands[lowestSeat].map(face));
+  // 有人拿到太多的 2 → 这把作废，重新洗牌
+  const redealAt = prev.config.redealTwos;
+  const fourTwos = hands.findIndex((h) => h.filter((c) => rankOf(c) === RANK_TWO).length >= redealAt);
   const redealSeat = fourTwos >= 0 ? fourTwos : null;
   const log: LogEvent[] = [{ kind: 'deal', flipped, flippedTo: lowestSeat, leader: lowestSeat }];
   if (redealSeat !== null) log.push({ kind: 'fourTwos', seat: redealSeat });
@@ -220,7 +224,24 @@ export function deal(prev: GameState, rand: () => number = Math.random, isRedeal
   };
 }
 
-/** 有人拿到四张 2 之后：同一局重新洗牌发牌（局数不变） */
+/**
+ * 谁先出：看谁手里有最小的牌。
+ *  - 一个人有（或者有的张数最多，比如两副牌里一个人拿了两张 ♣3）→ 他先出。
+ *  - 平手（比如两个人各一张 ♣3）→ 在平手的人里看下一张小牌（♦3，再 ♥3，再 ♠3，再 4…），谁有、谁张数多，谁先出。
+ *  - 一直平到底 → 座位靠前的先出。
+ */
+export function pickLeader(hands: CardId[][]): number {
+  let cands = hands.map((_, i) => i);
+  for (let f = 0; f < 52 && cands.length > 1; f++) {
+    const counts = cands.map((i) => hands[i].filter((c) => face(c) === f).length);
+    const best = Math.max(...counts);
+    if (best === 0) continue;
+    cands = cands.filter((_, k) => counts[k] === best);
+  }
+  return cands[0];
+}
+
+/** 有人拿到太多的 2 之后：同一局重新洗牌发牌（局数不变） */
 export function redeal(state: GameState, rand: () => number = Math.random): GameState {
   if (state.redealSeat === null) throw new GameError('不需要重新发牌');
   return deal(state, rand, true);
@@ -228,9 +249,9 @@ export function redeal(state: GameState, rand: () => number = Math.random): Game
 
 /** 这个座位现在能出的所有牌型（含「第一手必须带 ♣3」的限制） */
 export function legalPlays(state: GameState, seat: number): Combo[] {
-  const opts = playableCombos(state.seats[seat].hand, state.lastPlay?.combo ?? null);
+  const opts = playableCombos(state.seats[seat].hand, state.lastPlay?.combo ?? null, state.config.decks);
   const must = state.mustInclude;
-  return must === null ? opts : opts.filter((c) => c.cards.includes(must));
+  return must === null ? opts : opts.filter((c) => c.cards.some((x) => face(x) === must));
 }
 
 const bump = (xs: number[], i: number) => xs.map((x, j) => (j === i ? x + 1 : x));
@@ -253,10 +274,12 @@ export function validatePlay(state: GameState, seat: number, cards: CardId[]): C
   const hand = new Set(state.seats[seat].hand);
   if (cards.length === 0) throw new GameError('请选择要出的牌');
   if (!cards.every((c) => hand.has(c))) throw new GameError('你手里没有这些牌');
-  if (state.mustInclude !== null && !cards.includes(state.mustInclude))
+  if (state.mustInclude !== null && !cards.some((c) => face(c) === state.mustInclude))
     throw new GameError(`第一手必须带上 ${cardLabel(state.mustInclude)}`);
   const combo = identify(cards);
   if (!combo) throw new GameError('不是合法的牌型');
+  if (!allowedCombo(combo.type, state.config.decks))
+    throw new GameError(state.config.decks >= 2 ? '四人局的铁支是五张一样的加一张单牌' : '这个牌型这局不能出');
   const prev = state.lastPlay?.combo ?? null;
   if (!canBeat(combo, prev)) {
     if (prev && prev.type !== combo.type) throw new GameError(`这一轮要出${COMBO_NAMES[prev.type]}（或炸弹）`);
@@ -326,7 +349,7 @@ export function pass(state: GameState, seat: number): GameState {
   const passed = state.passed.slice();
   passed[seat] = true;
   // 失误 = 手里有非炸弹的牌压得过却不要。压不过、或只剩炸弹能压，都不算失误。
-  const couldHavePlayed = playableCombos(state.seats[seat].hand, state.lastPlay.combo).some((c) => !isBomb(c.type));
+  const couldHavePlayed = playableCombos(state.seats[seat].hand, state.lastPlay.combo, state.config.decks).some((c) => !isBomb(c.type));
   const passes = bump(state.passes, seat);
   const misses = couldHavePlayed ? bump(state.misses, seat) : state.misses;
   const log: LogEvent[] = [{ kind: 'pass', seat }];

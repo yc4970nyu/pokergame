@@ -1,4 +1,4 @@
-import { CardId } from './cards';
+import { CardId, face, rankOf } from './cards';
 import { Combo, isBomb } from './combos';
 import { GameState, legalPlays } from './game';
 
@@ -29,7 +29,7 @@ export function chooseBotMove(state: GameState, seat: number): BotMove {
   if (nonBombs.length) {
     const cheapest = nonBombs[0];
     // Hold back very high cards early if the threat is low
-    const usesTwo = cheapest.cards.some((c) => c >= 48);
+    const usesTwo = cheapest.cards.some((c) => rankOf(c) === 12);
     if (usesTwo && threat > 5 && hand.length > 6 && Math.random() < 0.6) return { type: 'pass' };
     return { type: 'play', cards: cheapest.cards };
   }
@@ -49,7 +49,7 @@ function pickLead(options: Combo[], handLen: number, threat: number): Combo {
     return pool.filter((c) => c.type === 'single').sort((a, b) => b.key - a.key)[0];
   }
   const straight = low('straight');
-  if (straight && straight.cards[4] < 44) return straight;
+  if (straight && face(straight.cards[4]) < 44) return straight;
   const fh = low('fullhouse');
   if (fh && fh.key < 9) return fh;
   const single = low('single');

@@ -1,9 +1,10 @@
 // 大老二 — card model
 //
-// A card is an integer 0..51:  id = rankIndex * 4 + suitIndex
+// A card is an integer 0..51 (one deck):  id = rankIndex * 4 + suitIndex
+// With two decks (4 players) the second deck is 52..103: id = deck * 52 + face.
 //   rankIndex: 0 = '3', 1 = '4', ... 10 = 'K', 11 = 'A', 12 = '2'   (3 smallest, 2 biggest)
 //   suitIndex: 0 = ♣ club, 1 = ♦ diamond, 2 = ♥ heart, 3 = ♠ spade (club smallest)
-// So comparing two single cards is just comparing their ids.
+// So comparing two single cards is just comparing their faces (id % 52).
 
 export type CardId = number;
 
@@ -13,8 +14,10 @@ export const RANK_LABELS = ['3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', '
 
 export const CLUB_3: CardId = 0;
 
-export const rankOf = (c: CardId) => Math.floor(c / 4);
-export const suitOf = (c: CardId) => c % 4;
+/** What the card looks like, 0..51 — the same for both copies in a two-deck game */
+export const face = (c: CardId) => c % 52;
+export const rankOf = (c: CardId) => Math.floor(face(c) / 4);
+export const suitOf = (c: CardId) => face(c) % 4;
 
 /** Natural rank used for straights: A=1, 2=2, 3=3 ... K=13 */
 export const naturalRank = (c: CardId) => {
@@ -25,6 +28,8 @@ export const naturalRank = (c: CardId) => {
 };
 
 export const cardLabel = (c: CardId) => `${SUIT_SYMBOLS[suitOf(c)]}${RANK_LABELS[rankOf(c)]}`;
+/** 同一张脸的牌排在一起：先比大小（face），再按哪副牌 */
+export const byFace = (a: CardId, b: CardId) => face(a) - face(b) || a - b;
 
 /** File name inside /cards (svg-cards PNG set) */
 export const cardImageName = (c: CardId) => {
@@ -35,7 +40,7 @@ export const cardImageName = (c: CardId) => {
   return `${suit}_${face}`;
 };
 
-export const fullDeck = (): CardId[] => Array.from({ length: 52 }, (_, i) => i);
+export const fullDeck = (decks = 1): CardId[] => Array.from({ length: 52 * decks }, (_, i) => i);
 
 export function shuffle<T>(arr: T[], rand: () => number = Math.random): T[] {
   const a = arr.slice();
@@ -46,4 +51,4 @@ export function shuffle<T>(arr: T[], rand: () => number = Math.random): T[] {
   return a;
 }
 
-export const sortCards = (cards: CardId[]) => cards.slice().sort((a, b) => a - b);
+export const sortCards = (cards: CardId[]) => cards.slice().sort(byFace);

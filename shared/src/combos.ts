@@ -1,6 +1,6 @@
-import { CardId, naturalRank, rankOf, suitOf, sortCards } from './cards';
+import { CardId, face, naturalRank, rankOf, suitOf, sortCards } from './cards';
 
-export type ComboType = 'single' | 'pair' | 'fullhouse' | 'straight' | 'fourkind' | 'straightflush';
+export type ComboType = 'single' | 'pair' | 'fullhouse' | 'straight' | 'fourkind' | 'fivekind' | 'straightflush';
 
 export interface Combo {
   type: ComboType;
@@ -15,12 +15,19 @@ export const COMBO_NAMES: Record<ComboType, string> = {
   fullhouse: '葫芦',
   straight: '顺子',
   fourkind: '铁支',
+  fivekind: '铁支',
   straightflush: '同花顺',
 };
 
-export const isBomb = (t: ComboType) => t === 'fourkind' || t === 'straightflush';
+export const isBomb = (t: ComboType) => t === 'fourkind' || t === 'fivekind' || t === 'straightflush';
+
+/**
+ * 两副牌（4 人局）里，铁支是「五张一样的 + 一张单牌」（共 6 张）；四张一样的 + 一张不再是铁支。
+ * 一副牌（2、3 人局）里，铁支还是「四张一样的 + 一张单牌」。
+ */
+export const allowedCombo = (type: ComboType, decks: number) => (decks >= 2 ? type !== 'fourkind' : type !== 'fivekind');
 /** Among bombs: straight flush beats four-of-a-kind */
-const BOMB_LEVEL: Partial<Record<ComboType, number>> = { fourkind: 1, straightflush: 2 };
+const BOMB_LEVEL: Partial<Record<ComboType, number>> = { fourkind: 1, fivekind: 1, straightflush: 2 };
 
 /**
  * Valid straight windows, by natural rank start (A=1).
@@ -57,7 +64,7 @@ export function identify(input: CardId[]): Combo | null {
   const cards = sortCards(input);
   if (new Set(cards).size !== cards.length) return null;
   const n = cards.length;
-  if (n === 1) return { type: 'single', cards, key: cards[0] };
+  if (n === 1) return { type: 'single', cards, key: face(cards[0]) };
 
   const counts = new Map<number, CardId[]>();
   for (const c of cards) {
@@ -67,7 +74,7 @@ export function identify(input: CardId[]): Combo | null {
   }
 
   if (n === 2) {
-    if (rankOf(cards[0]) === rankOf(cards[1])) return { type: 'pair', cards, key: cards[1] }; // higher suit decides
+    if (rankOf(cards[0]) === rankOf(cards[1])) return { type: 'pair', cards, key: face(cards[1]) }; // higher suit decides
     return null;
   }
 
@@ -81,10 +88,15 @@ export function identify(input: CardId[]): Combo | null {
     // 顺子 / 同花顺: compare sequence, then the suit of the biggest card (max id)
     const strength = straightStrength(cards);
     if (strength !== null) {
-      const key = strength * 100 + cards[4];
+      const key = strength * 100 + face(cards[4]);
       const flush = cards.every((c) => suitOf(c) === suitOf(cards[0]));
       return { type: flush ? 'straightflush' : 'straight', cards, key };
     }
+  }
+  if (n === 6) {
+    // 铁支（两副牌）: five of a kind + 1 kicker of another rank
+    const groups = [...counts.values()].sort((a, b) => b.length - a.length);
+    if (groups[0].length === 5 && groups[1]?.length === 1) return { type: 'fivekind', cards, key: rankOf(groups[0][0]) };
   }
   return null;
 }
@@ -152,16 +164,22 @@ export function enumerateCombos(hand: CardId[]): Combo[] {
       if (r2 === r || cs2.length < 2) continue;
       // prefer a pair that doesn't break a triple/quad
       const cand = cs2.slice(0, 2);
-      if (!pair || (cs2.length === 2 && (ranks.get(rankOf(pair[0]))!.length > 2 || cand[1] < pair[1]))) pair = cand;
+      if (!pair || (cs2.length === 2 && (ranks.get(rankOf(pair[0]))!.length > 2 || face(cand[1]) < face(pair[1])))) pair = cand;
     }
     if (pair) out.push(identify([...cs.slice(0, 3), ...pair])!);
   }
 
-  // four of a kind + cheapest kicker
+  // four of a kind + cheapest kicker (一副牌)
   for (const [r, cs] of ranks) {
     if (cs.length !== 4) continue;
     const kicker = sorted.find((c) => rankOf(c) !== r);
     if (kicker !== undefined) out.push(identify([...cs, kicker])!);
+  }
+  // five of a kind + cheapest kicker (两副牌)
+  for (const [r, cs] of ranks) {
+    if (cs.length < 5) continue;
+    const kicker = sorted.find((c) => rankOf(c) !== r);
+    if (kicker !== undefined) out.push(identify([...cs.slice(0, 5), kicker])!);
   }
 
   // straights & straight flushes
@@ -183,10 +201,10 @@ export function enumerateCombos(hand: CardId[]): Combo[] {
     }
   }
 
-  // dedupe
+  // dedupe：两副牌里同一张脸的两张牌效果一样，只留一个
   const seen = new Set<string>();
   return out.filter((c) => {
-    const k = c.cards.join(',');
+    const k = c.cards.map(face).join(',');
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
@@ -194,10 +212,10 @@ export function enumerateCombos(hand: CardId[]): Combo[] {
 }
 
 /** Combos from `hand` that can legally be played on `prev`, cheapest first. */
-export function playableCombos(hand: CardId[], prev: Combo | null): Combo[] {
-  const order: ComboType[] = ['single', 'pair', 'straight', 'fullhouse', 'fourkind', 'straightflush'];
+export function playableCombos(hand: CardId[], prev: Combo | null, decks = 1): Combo[] {
+  const order: ComboType[] = ['single', 'pair', 'straight', 'fullhouse', 'fourkind', 'fivekind', 'straightflush'];
   return enumerateCombos(hand)
-    .filter((c) => canBeat(c, prev))
+    .filter((c) => allowedCombo(c.type, decks) && canBeat(c, prev))
     .sort((a, b) => {
       const ba = isBomb(a.type) ? 1 : 0;
       const bb = isBomb(b.type) ? 1 : 0;

@@ -14,7 +14,7 @@ export interface Player {
 export interface Room {
   code: string;
   hostId: string;
-  maxPlayers: 2 | 3;
+  maxPlayers: 2 | 3 | 4;
   players: Player[]; // seat order
   game: GameState | null;
   lastEvent: string | null;
@@ -51,7 +51,7 @@ export class RoomManager {
     return code ? this.rooms.get(code) ?? null : null;
   }
 
-  create(playerId: string, name: string, socketId: string, maxPlayers: 2 | 3): Room {
+  create(playerId: string, name: string, socketId: string, maxPlayers: 2 | 3 | 4): Room {
     this.leave(playerId);
     const room: Room = {
       code: this.newCode(),
@@ -143,7 +143,7 @@ export class RoomManager {
     this.touch(room);
   }
 
-  setMax(playerId: string, max: 2 | 3) {
+  setMax(playerId: string, max: 2 | 3 | 4) {
     const room = this.requireHost(playerId);
     if (room.game) throw new GameError('游戏已经开始了');
     if (room.players.length > max) throw new GameError('人数已经超过了');
@@ -266,6 +266,7 @@ export class RoomManager {
         ? {
             phase: g.phase,
             round: g.round,
+            decks: g.config.decks,
             dealNo: g.dealNo,
             mustInclude: g.mustInclude,
             redealSeat: g.redealSeat,

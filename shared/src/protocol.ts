@@ -6,7 +6,7 @@ import type { Settlement, RoundRecord } from './game';
 export interface RoomView {
   code: string;
   hostId: string;
-  maxPlayers: 2 | 3;
+  maxPlayers: 2 | 3 | 4;
   you: string; // your player id
   players: PlayerView[];
   game: GameView | null;
@@ -25,10 +25,12 @@ export interface PlayerView {
 export interface GameView {
   phase: 'playing' | 'roundOver' | 'matchOver';
   round: number;
+  /** 1 副牌或 2 副牌（4 人局） */
+  decks: 1 | 2;
   /** 第几次发牌（重发也算），变了就播发牌动画 */
   dealNo: number;
   /** 开局第一手必须带上的牌（一般是 ♣3） */
-  mustInclude: CardId | null;
+  mustInclude: number | null;
   /** 这个座位拿到了四张 2，本把作废、即将重发 */
   redealSeat: number | null;
   turn: number;
@@ -51,12 +53,12 @@ export interface GameView {
 }
 
 export interface ClientToServer {
-  'room:create': (p: { name: string; token: string; maxPlayers: 2 | 3 }, ack: (r: Ack) => void) => void;
+  'room:create': (p: { name: string; token: string; maxPlayers: 2 | 3 | 4 }, ack: (r: Ack) => void) => void;
   'room:join': (p: { code: string; name: string; token: string }, ack: (r: Ack) => void) => void;
   'room:leave': () => void;
   'room:addBot': () => void;
   'room:kick': (p: { playerId: string }) => void;
-  'room:setMax': (p: { maxPlayers: 2 | 3 }) => void;
+  'room:setMax': (p: { maxPlayers: 2 | 3 | 4 }) => void;
   'game:start': () => void;
   'game:play': (p: { cards: CardId[] }, ack: (r: Ack) => void) => void;
   'game:pass': (ack: (r: Ack) => void) => void;

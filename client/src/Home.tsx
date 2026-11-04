@@ -13,7 +13,7 @@ export function Home() {
   const [mode, setMode] = useState<Mode>(urlCode ? 'join' : null);
   const [name, setName] = useState(savedName());
   const [code, setCode] = useState(urlCode);
-  const [size, setSize] = useState<2 | 3>(3);
+  const [size, setSize] = useState<2 | 3 | 4>(3);
   const [busy, setBusy] = useState(false);
   const { speed } = useSettings();
   const sp = springs(speed);
@@ -117,8 +117,8 @@ export function Home() {
                 <div className="field">
                   <span>几个人</span>
                   <div className="seg" role="radiogroup" aria-label="人数">
-                    {[3, 2].map((n) => (
-                      <button type="button" key={n} role="radio" aria-checked={size === n} className={size === n ? 'on' : ''} onClick={() => setSize(n as 2 | 3)}>
+                    {[4, 3, 2].map((n) => (
+                      <button type="button" key={n} role="radio" aria-checked={size === n} className={size === n ? 'on' : ''} onClick={() => setSize(n as 2 | 3 | 4)}>
                         {n} 人局
                       </button>
                     ))}

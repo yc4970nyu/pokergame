@@ -43,7 +43,7 @@ io.on('connection', (socket) => {
   socket.on('room:create', ({ name, token, maxPlayers }, ack) => {
     try {
       socket.data.playerId = token;
-      const room = rooms.create(token, name, socket.id, maxPlayers === 2 ? 2 : 3);
+      const room = rooms.create(token, name, socket.id, maxPlayers === 2 ? 2 : maxPlayers === 4 ? 4 : 3);
       ack({ ok: true, code: room.code });
       broadcast(room);
     } catch (e) {
@@ -69,7 +69,7 @@ io.on('connection', (socket) => {
   }));
   socket.on('room:addBot', () => guard(() => rooms.addBot(me())));
   socket.on('room:kick', ({ playerId }) => guard(() => rooms.kick(me(), playerId)));
-  socket.on('room:setMax', ({ maxPlayers }) => guard(() => rooms.setMax(me(), maxPlayers === 2 ? 2 : 3)));
+  socket.on('room:setMax', ({ maxPlayers }) => guard(() => rooms.setMax(me(), maxPlayers === 2 ? 2 : maxPlayers === 4 ? 4 : 3)));
   socket.on('game:start', () => guard(() => rooms.start(me())));
   socket.on('game:next', () => guard(() => rooms.next(me())));
   socket.on('game:end', () => guard(() => rooms.end(me())));
@@ -77,7 +77,7 @@ io.on('connection', (socket) => {
 
   socket.on('game:play', ({ cards }, ack) => {
     try {
-      if (!Array.isArray(cards) || !cards.every((c) => Number.isInteger(c) && c >= 0 && c < 52)) throw new Error('无效的牌');
+      if (!Array.isArray(cards) || !cards.every((c) => Number.isInteger(c) && c >= 0 && c < 104)) throw new Error('无效的牌');
       rooms.play(me(), cards);
       ack({ ok: true });
     } catch (e) {

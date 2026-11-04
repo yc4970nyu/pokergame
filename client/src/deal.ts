@@ -3,7 +3,7 @@ import type { CardId } from '../../shared/src/cards';
 /**
  * The opening of every round, as one timeline (seconds from the start, already scaled by the speed setting):
  *   draw   — the deck appears, the random card is drawn off the top, flips face-up and sits in the middle
- *   deal   — 17 cards each, dealt round-robin one at a time (about 3 s at normal speed)
+ *   deal   — 17 cards each (25 with two decks), dealt round-robin one at a time (about 3 s at normal speed)
  *   give   — the drawn card flies to whoever holds the lowest card (♣3)
  *   reveal — my hand turns face-up
  *   ready  — input unlocks
@@ -25,8 +25,7 @@ export interface DealPlan {
 
 // The server holds bots for DEAL_HOLD_MS (server/src/rooms.ts) so nobody moves before this timeline ends at normal speed.
 
-export function makeDealPlan(round: number, nSeats: number, flipped: CardId, flippedTo: number, k: number): DealPlan {
-  const perSeat = 17;
+export function makeDealPlan(round: number, nSeats: number, flipped: CardId, flippedTo: number, k: number, perSeat = 17): DealPlan {
   const dealStart = 0.9 * k;
   const dealDur = 3.0 * k;
   const step = dealDur / (perSeat * nSeats);

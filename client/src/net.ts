@@ -61,7 +61,7 @@ const withAck = (fn: (cb: (r: Ack) => void) => void) =>
   new Promise<Ack>((resolve) => fn(resolve));
 
 export const api = {
-  create: (name: string, maxPlayers: 2 | 3) =>
+  create: (name: string, maxPlayers: 2 | 3 | 4) =>
     withAck((cb) => socket.emit('room:create', { name, token, maxPlayers }, cb)),
   join: (code: string, name: string) =>
     withAck((cb) => socket.emit('room:join', { code, name, token }, cb)),
@@ -72,7 +72,7 @@ export const api = {
   },
   addBot: () => socket.emit('room:addBot'),
   kick: (playerId: string) => socket.emit('room:kick', { playerId }),
-  setMax: (maxPlayers: 2 | 3) => socket.emit('room:setMax', { maxPlayers }),
+  setMax: (maxPlayers: 2 | 3 | 4) => socket.emit('room:setMax', { maxPlayers }),
   start: () => socket.emit('game:start'),
   next: () => socket.emit('game:next'),
   end: () => socket.emit('game:end'),

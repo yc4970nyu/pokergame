@@ -863,3 +863,22 @@ input { font: inherit; }
   .ms-actions { padding-top: 8px; padding-bottom: calc(8px + var(--safe-b)); justify-content: flex-end; }
   .ms-actions .ms-btn { flex: 0 0 auto; min-height: 38px; min-width: 140px; }
 }
+
+/* ---------- 四人局：三个对手挤在桌子上方，座位做紧凑 ---------- */
+.table.n4 .seat-backs { display: none; }
+.table.n4 .seat-left { left: 6px; top: 8px; }
+.table.n4 .seat-right { right: 6px; top: 8px; }
+.table.n4 .seat-top { top: 8px; }
+.table.n4 .seat-info { padding: 6px 9px 6px 6px; gap: 6px; }
+.table.n4 .seat .avatar { width: 30px; height: 30px; font-size: 14px; }
+.table.n4 .seat .seat-name { font-size: 12px; max-width: 64px; }
+.table.n4 .seat-meta .count { font-size: 17px; }
+.table.n4 .seat-score { margin-left: 5px; font-size: 13px; }
+.table.n4 .seat .bubble { margin-top: 4px; padding: 2px 9px; font-size: 12px; }
+@media (min-width: 560px) {
+  .table.n4 .seat-info { padding: 8px 12px 8px 8px; gap: 9px; }
+  .table.n4 .seat .avatar { width: 36px; height: 36px; font-size: 16px; }
+  .table.n4 .seat .seat-name { font-size: 14px; max-width: 96px; }
+  .table.n4 .seat-meta .count { font-size: 21px; }
+  .table.n4 .seat-score { font-size: 15px; }
+}

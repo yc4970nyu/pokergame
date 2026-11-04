@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion, animate } from 'motion/react';
 import type { RoomView, PlayerView } from '../../shared/src/protocol';
-import { CardId, rankOf, suitOf, cardLabel } from '../../shared/src/cards';
-import { identify, canBeat, playableCombos, COMBO_NAMES, isBomb, Combo } from '../../shared/src/combos';
+import { CardId, rankOf, suitOf, face, byFace, cardLabel } from '../../shared/src/cards';
+import { identify, canBeat, playableCombos, allowedCombo, COMBO_NAMES, isBomb, Combo } from '../../shared/src/combos';
 import type { Payment } from '../../shared/src/game';
 import { CardFace, CardBack } from './Card';
 import { ConfirmEnd, Scoreboard } from './Scoreboard';
@@ -21,11 +21,12 @@ const posOf = (seat: number, me: number, n: number): Pos => {
   const rel = (seat - me + n) % n;
   if (rel === 0) return 'bottom';
   if (n === 2) return 'top';
+  if (n === 4) return rel === 1 ? 'right' : rel === 2 ? 'top' : 'left';
   return rel === 1 ? 'right' : 'left';
 };
 
 const sortBy = (cards: CardId[], mode: SortMode) =>
-  cards.slice().sort(mode === 'suit' ? (a, b) => suitOf(a) - suitOf(b) || rankOf(a) - rankOf(b) : (a, b) => a - b);
+  cards.slice().sort(mode === 'suit' ? (a, b) => suitOf(a) - suitOf(b) || rankOf(a) - rankOf(b) || a - b : byFace);
 
 export function Table({ room }: { room: RoomView }) {
   const g = room.game!;
@@ -52,7 +53,7 @@ export function Table({ room }: { room: RoomView }) {
   const seenRound = useRef<number | null>(null);
   if (seenRound.current !== g.dealNo) {
     const fresh = g.phase === 'playing' && !g.lastPlay && g.yourHand.length >= 17 && g.flipped !== null && g.flippedTo !== null;
-    planRef.current = fresh && !sp.off ? makeDealPlan(g.dealNo, n, g.flipped!, g.flippedTo!, k) : null;
+    planRef.current = fresh && !sp.off ? makeDealPlan(g.dealNo, n, g.flipped!, g.flippedTo!, k, g.decks >= 2 ? 25 : 17) : null;
     seenRound.current = g.dealNo;
   }
   const plan = planRef.current;
@@ -130,12 +131,13 @@ export function Table({ room }: { room: RoomView }) {
   const myTurn = !dealing && !redealing && g.phase === 'playing' && g.turn === me;
   const must = g.mustInclude;
   const selCombo = selected.size ? identify([...selected]) : null;
-  const selHasMust = must === null || selected.has(must);
-  const selOk = !!selCombo && canBeat(selCombo, prevCombo) && selHasMust;
+  const selHasMust = must === null || [...selected].some((c) => face(c) === must);
+  const selAllowed = !selCombo || allowedCombo(selCombo.type, g.decks);
+  const selOk = !!selCombo && selAllowed && canBeat(selCombo, prevCombo) && selHasMust;
 
   const doPlay = async () => {
     if (!myTurn || sending) return;
-    if (!selCombo) { sfx.error(); return toast(selected.size ? '这不是合法的牌型' : '先选牌'); }
+    if (!selCombo || !selAllowed) { sfx.error(); return toast(selCombo && g.decks >= 2 && selCombo.type === 'fourkind' ? '四人局的铁支是五张一样的加一张单牌' : selected.size ? '这不是合法的牌型' : '先选牌'); }
     if (!selHasMust) { sfx.error(); return toast(`第一手必须带上 ${cardLabel(must!)}`); }
     if (!selOk) {
       sfx.error();
@@ -158,7 +160,7 @@ export function Table({ room }: { room: RoomView }) {
   };
 
   const doHint = () => {
-    const opts = playableCombos(g.yourHand, prevCombo).filter((c) => must === null || c.cards.includes(must));
+    const opts = playableCombos(g.yourHand, prevCombo, g.decks).filter((c) => must === null || c.cards.some((x) => face(x) === must));
     if (!opts.length) { sfx.error(); return toast('没有能压过的牌'); }
     const pick = opts[hintIdx % opts.length];
     setHintIdx((i) => i + 1);
@@ -268,7 +270,7 @@ export function Table({ room }: { room: RoomView }) {
               ? ''
               : myTurn
                 ? selCombo
-                  ? `${COMBO_NAMES[selCombo.type]}${selOk ? '' : selHasMust ? ' · 压不过' : ` · 要带 ${cardLabel(must!)}`}`
+                  ? `${COMBO_NAMES[selCombo.type]}${selOk ? '' : !selAllowed ? ' · 铁支要五张一样的' : selHasMust ? ' · 压不过' : ` · 要带 ${cardLabel(must!)}`}`
                   : g.lastPlay ? `要压${COMBO_NAMES[g.lastPlay.combo.type]}` : must !== null ? `先出，要带 ${cardLabel(must)}` : '轮到你出牌'
                 : `等 ${turnName}`}
           </span>

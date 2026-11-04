@@ -84,10 +84,10 @@ export function ConfirmEnd({ onYes, onNo, sp }: { onYes: () => void; onNo: () =>
 }
 
 /** 三位玩家的固定颜色，所有图表通用 */
-const SEAT_COLORS = ['#5268C4', '#438579', '#A77B45'];
+const SEAT_COLORS = ['#5268C4', '#438579', '#A77B45', '#8A6A9E'];
 const colorOf = (seat: number) => SEAT_COLORS[seat % SEAT_COLORS.length];
 /** 每位玩家一个标记形状，颜色之外再辅助区分 */
-const SHAPES = ['circle', 'square', 'diamond'] as const;
+const SHAPES = ['circle', 'square', 'diamond', 'triangle'] as const;
 const shapeOf = (seat: number) => SHAPES[seat % SHAPES.length];
 const signed = (x: number) => (x > 0 ? `+${x}` : x < 0 ? `−${Math.abs(x)}` : '0');
 const ease = [0.22, 1, 0.36, 1] as const;
@@ -205,6 +205,7 @@ function Marker({ seat, size = 10 }: { seat: number; size?: number }) {
       {sh === 'circle' && <circle cx="5" cy="5" r="4.5" fill={c} />}
       {sh === 'square' && <rect x="0.8" y="0.8" width="8.4" height="8.4" rx="1.6" fill={c} />}
       {sh === 'diamond' && <rect x="1.8" y="1.8" width="6.4" height="6.4" rx="1" fill={c} transform="rotate(45 5 5)" />}
+      {sh === 'triangle' && <path d="M5 0.8 L9.4 9 L0.6 9 Z" fill={c} stroke={c} strokeWidth="0.8" strokeLinejoin="round" />}
     </svg>
   );
 }
@@ -334,7 +335,8 @@ function PointMark({ seat, cx, cy }: { seat: number; cx: number; cy: number }) {
   const common = { fill: '#fff', stroke: c, strokeWidth: 2 };
   if (sh === 'circle') return <circle cx={cx} cy={cy} r={4.5} {...common} />;
   if (sh === 'square') return <rect x={cx - 4.2} y={cy - 4.2} width={8.4} height={8.4} rx={1.5} {...common} />;
-  return <rect x={cx - 3.6} y={cy - 3.6} width={7.2} height={7.2} rx={1} transform={`rotate(45 ${cx} ${cy})`} {...common} />;
+  if (sh === 'diamond') return <rect x={cx - 3.6} y={cy - 3.6} width={7.2} height={7.2} rx={1} transform={`rotate(45 ${cx} ${cy})`} {...common} />;
+  return <path d={`M${cx} ${cy - 5} L${cx + 4.8} ${cy + 3.6} L${cx - 4.8} ${cy + 3.6} Z`} strokeLinejoin="round" {...common} />;
 }
 
 function niceTicks(lo: number, hi: number): number[] {

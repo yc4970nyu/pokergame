@@ -52,8 +52,8 @@ export function Lobby({ room }: { room: RoomView }) {
       {isHost ? (
         <div className="lobby-actions">
           <div className="seg" role="radiogroup" aria-label="人数">
-            {[3, 2].map((n) => (
-              <button key={n} role="radio" aria-checked={room.maxPlayers === n} className={room.maxPlayers === n ? 'on' : ''} onClick={() => api.setMax(n as 2 | 3)}>
+            {[4, 3, 2].map((n) => (
+              <button key={n} role="radio" aria-checked={room.maxPlayers === n} className={room.maxPlayers === n ? 'on' : ''} onClick={() => api.setMax(n as 2 | 3 | 4)}>
                 {n} 人局
               </button>
             ))}
@@ -61,6 +61,7 @@ export function Lobby({ room }: { room: RoomView }) {
           <button className="btn gold big" disabled={room.players.length < 2} onClick={api.start}>
             开始游戏
           </button>
+          {room.maxPlayers === 4 && <p className="hint">四人局：两副牌，每人 25 张，铁支是五张一样的加一张单牌。不满四人开始，就按三人局（一副牌）打。</p>}
           {room.players.length < 2 && <p className="hint">至少 2 个人才能开始。发房间号给朋友，或者加个机器人。</p>}
         </div>
       ) : (
