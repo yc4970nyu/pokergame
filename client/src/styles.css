@@ -882,3 +882,10 @@ input { font: inherit; }
   .table.n4 .seat-meta .count { font-size: 21px; }
   .table.n4 .seat-score { font-size: 15px; }
 }
+@media (orientation: landscape) and (max-height: 540px) {
+  /* 四人局横屏：上家的座位和桌心的牌错开 */
+  .table.n4 .seat-top { top: 2px; }
+  .table.n4 .seat-info { padding: 4px 9px 4px 5px; }
+  .table.n4 .seat .avatar { width: 26px; height: 26px; font-size: 12px; }
+  .table.n4 .trick { top: 62%; }
+}
