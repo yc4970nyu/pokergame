@@ -13,6 +13,7 @@ import { rememberHandRects } from './fly';
 import { api, toast } from './net';
 import { sfx } from './sound';
 import { useSettings, setSettings, springs, speedFactor, Speed, Springs } from './settings';
+import { voice } from './voice';
 
 type Pos = 'bottom' | 'left' | 'right' | 'top';
 type SortMode = 'rank' | 'suit';
@@ -102,11 +103,10 @@ export function Table({ room }: { room: RoomView }) {
       setGhost(g.lastPlay);
       setHintIdx(0);
     }
-    if (g.passed.some((p, i) => p && !prev.passed[i])) sfx.pass();
+    // 「不要」和输赢现在用录音（voice.ts），这里不再播合成音
     if (g.phase === 'roundOver' && prev.phase !== 'roundOver') {
       setGhost(g.lastPlay);
-      if (g.winner === me) sfx.win(); else sfx.lose();
-    } else if (g.phase === 'playing' && g.turn === me && prev.turn !== me) sfx.turn();
+    } else if (g.phase === 'playing' && g.turn === me && prev.turn !== me && !voice.busy()) sfx.turn();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [g.seq]);
 
@@ -145,6 +145,7 @@ export function Table({ room }: { room: RoomView }) {
       return toast(prevCombo && prevCombo.type !== selCombo.type && !isBomb(selCombo.type) ? `这一轮要出${COMBO_NAMES[prevCombo.type]}` : '压不过');
     }
     rememberHandRects(selCombo.cards);
+    voice.myPlay(g, selCombo); // 点下去的那一刻就出声，不等服务器
     setSending(true);
     const r = await api.play(selCombo.cards);
     setSending(false);
@@ -153,6 +154,7 @@ export function Table({ room }: { room: RoomView }) {
 
   const doPass = async () => {
     if (!myTurn || !g.lastPlay || sending) return;
+    voice.myPass(g);
     setSending(true);
     const r = await api.pass();
     setSending(false);

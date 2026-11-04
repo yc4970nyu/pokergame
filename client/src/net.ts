@@ -1,6 +1,7 @@
 import { io, Socket } from 'socket.io-client';
 import { useSyncExternalStore } from 'react';
 import type { ClientToServer, ServerToClient, RoomView, Ack } from '../../shared/src/protocol';
+import { voice } from './voice';
 
 const store = {
   get(k: string) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -52,6 +53,9 @@ socket.on('connect', () => {
 });
 socket.on('disconnect', () => set({ connected: false }));
 socket.on('room:state', (room) => {
+  // 语音要在出牌那一刻响：先播，再交给 React 渲染
+  voice.preload();
+  voice.onState(room.game);
   store.set('dld.room', room.code);
   set({ room });
 });

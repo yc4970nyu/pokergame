@@ -2,7 +2,7 @@
 import { getSettings } from './settings';
 
 let ctx: AudioContext | null = null;
-const ac = () => {
+export const ac = () => {
   if (!ctx) {
     const C = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     if (!C) return null;
