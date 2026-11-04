@@ -17,12 +17,13 @@ import { useSettings, setSettings, springs, speedFactor, Speed, Springs } from '
 type Pos = 'bottom' | 'left' | 'right' | 'top';
 type SortMode = 'rank' | 'suit';
 
+// 顺时针出牌：下一家（座位号 +1）坐在我的左手边，再下一家对面，再下一家右手边。
 const posOf = (seat: number, me: number, n: number): Pos => {
   const rel = (seat - me + n) % n;
   if (rel === 0) return 'bottom';
   if (n === 2) return 'top';
-  if (n === 4) return rel === 1 ? 'right' : rel === 2 ? 'top' : 'left';
-  return rel === 1 ? 'right' : 'left';
+  if (n === 4) return rel === 1 ? 'left' : rel === 2 ? 'top' : 'right';
+  return rel === 1 ? 'left' : 'right';
 };
 
 const sortBy = (cards: CardId[], mode: SortMode) =>
