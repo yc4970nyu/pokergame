@@ -10,38 +10,67 @@ import { ac } from './sound';
 import { getSettings } from './settings';
 
 const buffers = new Map<string, AudioBuffer>();
-let loading: Promise<void> | null = null;
+const inflight = new Map<string, Promise<void>>();
+const url = (name: string) => `/voice/${name}.mp3`;
 
-/** 下载并解码全部录音（只做一次） */
-function preload() {
-  if (loading) return loading;
-  const c = ac();
-  if (!c) return Promise.resolve();
-  loading = Promise.all(
-    VOICE_FILES.map(async (name) => {
-      try {
-        const res = await fetch(`/voice/${name}.mp3`);
-        if (!res.ok) return;
-        const data = await res.arrayBuffer();
-        const buf = await new Promise<AudioBuffer>((ok, bad) => c.decodeAudioData(data, ok, bad));
-        buffers.set(name, buf);
-      } catch {
-        /* 某一段坏了就不播那一段 */
+/** 下载并解码一段；失败自动重试（最多 3 次，间隔越来越长） */
+const lastTry = new Map<string, number>();
+function load(name: string, attempt = 0): Promise<void> {
+  if (buffers.has(name)) return Promise.resolve();
+  const running = inflight.get(name);
+  if (running && attempt === 0) return running;
+  // 一轮（3 次）都失败的，10 秒内不再重新来过，免得每次状态更新都狂刷网络
+  if (attempt === 0) {
+    const t = lastTry.get(name);
+    if (t && Date.now() - t < 10_000) return Promise.resolve();
+    lastTry.set(name, Date.now());
+  }
+  const p = (async () => {
+    const c = ac();
+    if (!c) return;
+    try {
+      const res = await fetch(url(name));
+      if (!res.ok) throw new Error(String(res.status));
+      const data = await res.arrayBuffer();
+      const buf = await new Promise<AudioBuffer>((ok, bad) => {
+        const r = c.decodeAudioData(data, ok, bad) as unknown as Promise<AudioBuffer> | undefined;
+        r?.catch?.(bad);
+      });
+      buffers.set(name, buf);
+    } catch {
+      if (attempt < 2) {
+        await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+        return load(name, attempt + 1);
       }
-    }),
-  ).then(() => undefined);
-  return loading;
+    }
+  })();
+  if (attempt === 0) {
+    inflight.set(name, p);
+    void p.finally(() => inflight.delete(name));
+  }
+  return p;
 }
 
-type Playing = { src: AudioBufferSourceNode; gain: GainNode; name: string };
+/** 下载并解码全部录音；之后再调用只会补上还没成功的那几段 */
+function preload() {
+  return Promise.all(VOICE_FILES.filter((n) => !buffers.has(n)).map((n) => load(n))).then(() => undefined);
+}
+
+type Playing =
+  | { kind: 'buf'; src: AudioBufferSourceNode; gain: GainNode; name: string }
+  | { kind: 'el'; el: HTMLAudioElement; name: string };
 let current: Playing | null = null;
 
 function stopCurrent() {
   const p = current;
   current = null;
   if (!p) return;
-  const c = ac();
   try {
+    if (p.kind === 'el') {
+      p.el.pause();
+      return;
+    }
+    const c = ac();
     if (c) {
       // 8ms 的极短淡出，避免硬切时的爆音
       p.gain.gain.setTargetAtTime(0, c.currentTime, 0.002);
@@ -52,29 +81,55 @@ function stopCurrent() {
   }
 }
 
+const log = (name: string, dur: number) =>
+  // 测试用：页面上定义了 __voiceLog 才记录
+  (window as unknown as { __voiceLog?: { name: string; t: number; dur: number; via?: string }[] }).__voiceLog?.push({ name, t: performance.now(), dur, via: Number.isNaN(dur) ? 'el' : 'buf' });
+
 function play(name: string, onEnded?: () => void) {
   if (!getSettings().sound) return false;
-  const c = ac();
+  const c = ac(); // 顺手恢复被暂停 / 被打断的音频
   const buf = buffers.get(name);
-  if (!c || !buf) return false;
   stopCurrent();
-  const src = c.createBufferSource();
-  src.buffer = buf;
-  const gain = c.createGain();
-  gain.gain.value = 1;
-  src.connect(gain).connect(c.destination);
-  const me: Playing = { src, gain, name };
-  src.onended = () => {
-    // 被下一段打断的不算播完
-    if (current !== me) return;
+  if (c && buf) {
+    const src = c.createBufferSource();
+    src.buffer = buf;
+    const gain = c.createGain();
+    gain.gain.value = 1;
+    src.connect(gain).connect(c.destination);
+    const me: Playing = { kind: 'buf', src, gain, name };
+    src.onended = () => {
+      // 被下一段打断的不算播完
+      if (current !== me) return;
+      current = null;
+      onEnded?.();
+    };
+    current = me;
+    src.start(0);
+    log(name, buf.duration);
+    return true;
+  }
+  // 这一段还没解码好（网速慢 / 下载失败）→ 用普通 <audio> 直接播文件，同时在后台再下载一次
+  void load(name);
+  try {
+    const el = new Audio(url(name));
+    el.setAttribute('playsinline', '');
+    const me: Playing = { kind: 'el', el, name };
+    const done = () => {
+      if (current !== me) return;
+      current = null;
+      onEnded?.();
+    };
+    el.onended = done;
+    el.onerror = done;
+    current = me;
+    const r = el.play();
+    if (r && typeof r.catch === 'function') r.catch(done);
+    log(name, NaN);
+    return true;
+  } catch {
     current = null;
-    onEnded?.();
-  };
-  current = me;
-  src.start(0);
-  // 测试用：页面上定义了 __voiceLog 才记录
-  (window as unknown as { __voiceLog?: { name: string; t: number; dur: number }[] }).__voiceLog?.push({ name, t: performance.now(), dur: buf.duration });
-  return true;
+    return false;
+  }
 }
 
 // ---- 赢家音效 + 「赢超过 40 块」 ----

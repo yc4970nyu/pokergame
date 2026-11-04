@@ -1,16 +1,74 @@
 // Tiny synthesized sound kit — no audio files to ship.
 import { getSettings } from './settings';
 
+// ---- 音频通道：要稳，任何情况下都能恢复出声 ----
+// 手机浏览器规定：必须用户点一下，网页才能出声；iPhone 切出去再回来、来电、锁屏后，
+// 音频会变成「被打断」(interrupted) 或「暂停」(suspended)。这里的做法：
+//  1. 不管是暂停还是被打断，只要不是 running，每次用到都尝试恢复；
+//  2. 页面上任何一次点击 / 触摸 / 按键都尝试恢复，并播一段极短的静音来真正「解锁」（iOS 需要）；
+//  3. 页面回到前台时也尝试恢复；
+//  4. 通道彻底坏了（closed）就重新建一个；
+//  5. iPhone 上把音频类型设成 playback，静音开关打开时也能出声（Safari 16.4+ 支持）。
 let ctx: AudioContext | null = null;
-export const ac = () => {
-  if (!ctx) {
-    const C = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    if (!C) return null;
-    ctx = new C();
+type Listener = () => void;
+const listeners = new Set<Listener>();
+const notify = () => listeners.forEach((f) => f());
+
+function create(): AudioContext | null {
+  const w = window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext };
+  const C = w.AudioContext ?? w.webkitAudioContext;
+  if (!C) return null;
+  try {
+    const nav = navigator as unknown as { audioSession?: { type: string } };
+    if (nav.audioSession) nav.audioSession.type = 'playback';
+  } catch { /* not supported */ }
+  try {
+    const c = new C();
+    c.onstatechange = notify;
+    return c;
+  } catch {
+    return null;
   }
-  if (ctx.state === 'suspended') void ctx.resume();
+}
+
+export const ac = () => {
+  if (!ctx || (ctx.state as string) === 'closed') {
+    ctx = create();
+    notify();
+  }
+  if (ctx && (ctx.state as string) !== 'running') {
+    try { void ctx.resume().then(notify, () => {}); } catch { /* ignore */ }
+  }
   return ctx;
 };
+
+/** 声音通道现在能出声吗 */
+export const audioRunning = () => !!ctx && (ctx.state as string) === 'running';
+export const onAudioChange = (f: Listener) => { listeners.add(f); return () => { listeners.delete(f); }; };
+
+/** 在用户手势里调用：恢复 + 播一段 1 个采样的静音，iOS 才算真正解锁 */
+export function unlockAudio() {
+  const c = ac();
+  if (!c) return;
+  try {
+    const b = c.createBuffer(1, 1, 22050);
+    const s = c.createBufferSource();
+    s.buffer = b;
+    s.connect(c.destination);
+    s.start(0);
+  } catch { /* ignore */ }
+}
+
+if (typeof document !== 'undefined') {
+  const onGesture = () => { if (getSettings().sound && !audioRunning()) unlockAudio(); };
+  for (const ev of ['pointerdown', 'touchstart', 'touchend', 'mousedown', 'click', 'keydown']) {
+    document.addEventListener(ev, onGesture, { capture: true, passive: true });
+  }
+  const onBack = () => { if (document.visibilityState === 'visible' && ctx && !audioRunning()) ac(); };
+  document.addEventListener('visibilitychange', onBack);
+  window.addEventListener('pageshow', onBack);
+  window.addEventListener('focus', onBack);
+}
 
 function noise(dur: number, freq: number, gain: number, delay = 0) {
   const c = ac();
@@ -51,7 +109,7 @@ const on = () => getSettings().sound;
 
 export const sfx = {
   /** unlock audio on first user gesture (iOS) */
-  unlock: () => { if (on()) ac(); },
+  unlock: () => { if (on()) unlockAudio(); },
   select: () => on() && noise(0.04, 3200, 0.12),
   play: (n = 1) => { if (!on()) return; for (let i = 0; i < Math.min(n, 5); i++) noise(0.09, 1800, 0.35, i * 0.035); },
   pass: () => on() && tone(220, 0.12, 0.08, 0, 'triangle'),

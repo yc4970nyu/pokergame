@@ -889,3 +889,15 @@ input { font: inherit; }
   .table.n4 .seat .avatar { width: 26px; height: 26px; font-size: 12px; }
   .table.n4 .trick { top: 62%; }
 }
+
+/* 手机还没允许出声时的提示 */
+.audio-hint {
+  position: fixed; top: calc(150px + var(--safe-t)); left: 50%; transform: translateX(-50%);
+  z-index: 90; display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 14px; border-radius: 999px; font-size: 13px; font-weight: 600;
+  color: var(--gold-ink); background: rgba(255, 255, 255, 0.92); border: 1px solid var(--gold-soft);
+  box-shadow: 0 8px 24px rgba(23, 24, 28, 0.16); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+  animation: audio-hint-pulse 1.8s ease-in-out infinite;
+}
+@keyframes audio-hint-pulse { 0%, 100% { box-shadow: 0 8px 24px rgba(23, 24, 28, 0.16); } 50% { box-shadow: 0 8px 24px rgba(212, 175, 55, 0.45); } }
+@media (orientation: landscape) and (max-height: 500px) { .audio-hint { top: calc(108px + var(--safe-t)); left: calc(12px + var(--safe-l, 0px)); transform: none; } }

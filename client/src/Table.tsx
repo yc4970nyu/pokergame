@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { AnimatePresence, motion, animate } from 'motion/react';
 import type { RoomView, PlayerView } from '../../shared/src/protocol';
 import { CardId, rankOf, suitOf, face, byFace, cardLabel } from '../../shared/src/cards';
@@ -11,7 +11,7 @@ import { TrickCards, DealSequence, ChipsLayer } from './Trick';
 import { DealPlan, makeDealPlan, countAt } from './deal';
 import { rememberHandRects } from './fly';
 import { api, toast } from './net';
-import { sfx } from './sound';
+import { sfx, audioRunning, onAudioChange, unlockAudio } from './sound';
 import { useSettings, setSettings, springs, speedFactor, Speed, Springs } from './settings';
 import { voice } from './voice';
 
@@ -197,6 +197,7 @@ export function Table({ room }: { room: RoomView }) {
       animate={bigWin && !sp.off ? { x: [0, -3, 3, -2, 2, -1, 0], y: [0, 2, -2, 1, -1, 0, 0] } : { x: 0, y: 0 }}
       transition={{ duration: 0.45, delay: 0.9 * k }}
     >
+      <AudioHint />
       {/* ---------- top bar ---------- */}
       <header className="topbar">
         <div className="hud panel">
@@ -569,5 +570,21 @@ function SettingsMenu({ speed, onClose, onEnd }: { speed: Speed; onClose: () => 
         <button className="btn small" onClick={onClose}>关闭</button>
       </div>
     </motion.div>
+  );
+}
+
+/** 手机还没允许网页出声时，在牌桌上提示点一下（页面任何地方点一下都会解锁，这个按钮只是提醒） */
+function AudioHint() {
+  const { sound } = useSettings();
+  const running = useSyncExternalStore(onAudioChange, audioRunning, audioRunning);
+  if (!sound || running) return null;
+  return (
+    <button type="button" className="audio-hint" onClick={() => unlockAudio()}>
+      <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden>
+        <path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor" />
+        <path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      </svg>
+      点一下开启声音
+    </button>
   );
 }
