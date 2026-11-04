@@ -61,7 +61,7 @@ export function Lobby({ room }: { room: RoomView }) {
           <button className="btn gold big" disabled={room.players.length < 2} onClick={api.start}>
             开始游戏
           </button>
-          {room.maxPlayers === 4 && <p className="hint">四人局：两副牌，每人 25 张，铁支是五张一样的加一张单牌。不满四人开始，就按三人局（一副牌）打。</p>}
+          {room.maxPlayers === 4 && <p className="hint">四人局：一副牌，每人 13 张，没有翻牌，其余规则和三人局一样。不满四人开始，就按三人局打。</p>}
           {room.players.length < 2 && <p className="hint">至少 2 个人才能开始。发房间号给朋友，或者加个机器人。</p>}
         </div>
       ) : (

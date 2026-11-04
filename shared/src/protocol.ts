@@ -25,8 +25,10 @@ export interface PlayerView {
 export interface GameView {
   phase: 'playing' | 'roundOver' | 'matchOver';
   round: number;
-  /** 1 副牌或 2 副牌（4 人局） */
+  /** 1 副牌或 2 副牌 */
   decks: 1 | 2;
+  /** 每人发几张（不含翻牌） */
+  handSize: number;
   /** 第几次发牌（重发也算），变了就播发牌动画 */
   dealNo: number;
   /** 开局第一手必须带上的牌（一般是 ♣3） */

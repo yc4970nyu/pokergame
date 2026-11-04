@@ -267,6 +267,7 @@ export class RoomManager {
             phase: g.phase,
             round: g.round,
             decks: g.config.decks,
+            handSize: g.config.handSize,
             dealNo: g.dealNo,
             mustInclude: g.mustInclude,
             redealSeat: g.redealSeat,
@@ -332,7 +333,7 @@ function describe(room: Room, log: LogEvent[]): string | null {
   const nm = (s: number) => room.players[s]?.name ?? '?';
   const parts: string[] = [];
   for (const e of log) {
-    if (e.kind === 'deal') parts.push(`第 ${room.game!.round} 局开始，${nm(e.leader)} 拿到翻牌，先出`);
+    if (e.kind === 'deal') parts.push(`第 ${room.game!.round} 局开始，${nm(e.leader)} ${e.flipped === null ? '先出' : '拿到翻牌，先出'}`);
     if (e.kind === 'play') parts.push(`${nm(e.seat)} 出了${COMBO_NAMES[e.combo.type]}`);
     if (e.kind === 'pass') parts.push(`${nm(e.seat)} 不要`);
     if (e.kind === 'newTrick') parts.push(`${nm(e.leader)} 获得出牌权`);

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   CardId, identify, canBeat, newGame, play, pass, chooseBotMove, enumerateCombos, playableCombos,
-  GameState, rankOf, nextRound, settle, endMatch, newMatch, deal, redeal, legalPlays, pickLeader, configFor,
+  GameState, rankOf, nextRound, settle, endMatch, newMatch, deal, redeal, legalPlays, pickLeader, configFor, CONFIG_TWO_DECKS,
 } from '../src';
 
 // helper: card from "3c", "10s", "Ah", "2d"
@@ -357,7 +357,84 @@ describe('四张 2 重发 & 第一手带 ♣3', () => {
   });
 });
 
-describe('四人局（两副牌）', () => {
+describe('四人局（一副牌，每人 13 张，和三人局规则一样）', () => {
+  const four = [0, 1, 2, 3].map((i) => ({ id: `p${i}`, name: `P${i}`, isBot: false }));
+  const twos = (h: CardId[]) => h.filter((x) => rankOf(x) === 12).length;
+
+  it('一副牌 52 张，每人 13 张，没有翻牌，没有烧牌', () => {
+    expect(configFor(4)).toMatchObject({ handSize: 13, decks: 1, redealTwos: 4 });
+    for (let i = 0; i < 200; i++) {
+      const g = newGame(four);
+      expect(g.seats.map((s) => s.hand.length)).toEqual([13, 13, 13, 13]);
+      expect(g.flipped).toBe(null);
+      expect(g.flippedTo).toBe(null);
+      const all = g.seats.flatMap((s) => s.hand);
+      expect(new Set(all).size).toBe(52);
+      expect(all.every((x) => x >= 0 && x < 52)).toBe(true);
+    }
+  });
+
+  it('♣3 的人先出，第一手必须带 ♣3', () => {
+    for (let i = 0; i < 100; i++) {
+      let g = newGame(four);
+      while (g.redealSeat !== null) g = redeal(g);
+      expect(g.seats[g.turn].hand).toContain(0);
+      expect(g.mustInclude).toBe(0);
+      const other = g.seats[g.turn].hand.find((x) => x !== 0)!;
+      expect(() => play(g, g.turn, [other])).toThrow();
+      g = play(g, g.turn, [0]);
+      expect(g.mustInclude).toBe(null);
+    }
+  });
+
+  it('铁支还是四张一样的 + 一张单牌，五张一样的不存在', () => {
+    const b = identify(cs('8c 8d 8h 8s 3c'))!;
+    expect(b.type).toBe('fourkind');
+    let g = newGame(four);
+    while (g.redealSeat !== null) g = redeal(g);
+    g = { ...g, mustInclude: null, turn: 0, lastPlay: null, seats: g.seats.map((s, i) => ({ ...s, hand: i === 0 ? cs('8c 8d 8h 8s 3c Kd') : s.hand })) };
+    expect(play(g, 0, cs('8c 8d 8h 8s 3c')).seats[0].hand).toEqual(cs('Kd'));
+  });
+
+  it('有人拿到四张 2 就重发，和三人局一样', () => {
+    let redeals = 0;
+    for (let i = 0; i < 3000; i++) {
+      const g = newGame(four);
+      if (g.redealSeat !== null) {
+        redeals++;
+        expect(twos(g.seats[g.redealSeat].hand)).toBe(4);
+      } else expect(g.seats.every((x) => twos(x.hand) < 4)).toBe(true);
+    }
+    expect(redeals).toBeGreaterThan(0);
+  });
+
+  it('算钱：四人局赢家收三家的钱，零和', () => {
+    let g = newGame(four);
+    while (g.redealSeat !== null) g = redeal(g);
+    g = { ...g, mustInclude: null, turn: 0, lastPlay: null, seats: g.seats.map((s, i) => ({ ...s, hand: [cs('As'), cs('3c 4c 5c'), cs('3d'), cs('3h 4h')][i] })) };
+    g = play(g, 0, cs('As'));
+    expect(g.phase).toBe('roundOver');
+    expect(g.lastDeltas).toEqual([6, -3, -1, -2]);
+    expect(g.lastDeltas!.reduce((a, b) => a + b, 0)).toBe(0);
+  });
+
+  it('机器人打 150 局四人局：只走合法的牌，零和，能打完', () => {
+    for (let k = 0; k < 150; k++) {
+      let s: GameState = newGame(Array.from({ length: 4 }, (_, i) => ({ id: String(i), name: String(i), isBot: true })));
+      let steps = 0;
+      while (s.phase === 'playing') {
+        if (s.redealSeat !== null) { s = redeal(s); continue; }
+        const m = chooseBotMove(s, s.turn);
+        s = m.type === 'play' ? play(s, s.turn, m.cards) : pass(s, s.turn);
+        if (++steps > 4000) throw new Error('game did not terminate');
+      }
+      expect(s.seats.reduce((a, x) => a + x.score, 0)).toBe(0);
+      expect(s.seats[s.winner!].hand.length).toBe(0);
+    }
+  });
+});
+
+describe('两副牌玩法（引擎保留，目前没有房间使用）', () => {
   const four = [0, 1, 2, 3].map((i) => ({ id: `p${i}`, name: `P${i}`, isBot: false }));
   const R2: Record<string, number> = { '3': 0, '4': 1, '5': 2, '6': 3, '7': 4, '8': 5, '9': 6, '10': 7, J: 8, Q: 9, K: 10, A: 11, '2': 12 };
   /** 第 k 副牌里的牌：dc("3c",1) = 第二副的 ♣3 */
@@ -365,7 +442,7 @@ describe('四人局（两副牌）', () => {
 
   it('104 张牌：翻 1 张，每人 25 张，先手 26 张，烧掉 3 张', () => {
     for (let i = 0; i < 100; i++) {
-      const g = newGame(four);
+      const g = newGame(four, CONFIG_TWO_DECKS);
       expect(g.config.decks).toBe(2);
       const sizes = g.seats.map((s) => s.hand.length).sort((a, b) => a - b);
       expect(sizes).toEqual([25, 25, 25, 26]);
@@ -374,12 +451,6 @@ describe('四人局（两副牌）', () => {
       expect(new Set(all).size).toBe(101); // 没有重复的牌号；104 − 3 张烧掉
       expect(all.every((c) => c >= 0 && c < 104)).toBe(true);
     }
-  });
-
-  it('三人局还是一副牌 17 张', () => {
-    const g = newGame(four.slice(0, 3));
-    expect(g.config.decks).toBe(1);
-    expect(g.seats.map((s) => s.hand.length).sort()).toEqual([17, 17, 18]);
   });
 
   it('先手：有两张 ♣3 的人先出', () => {
@@ -406,7 +477,7 @@ describe('四人局（两副牌）', () => {
 
   it('第一手必须带 ♣3（两副牌里哪张 ♣3 都行）', () => {
     for (let i = 0; i < 30; i++) {
-      let g = newGame(four);
+      let g = newGame(four, CONFIG_TWO_DECKS);
       while (g.redealSeat !== null) g = redeal(g);
       const must = g.mustInclude!;
       expect(must).toBe(Math.min(...g.seats[g.turn].hand.map((c) => c % 52)));
@@ -440,7 +511,7 @@ describe('四人局（两副牌）', () => {
   it('两副牌里：四张一样的 + 一张不再是铁支；一副牌里五张的铁支不存在', () => {
     const four5 = ['8c', '8d', '8h', '8s'].map((x) => dc(x)).concat(dc('3c'));
     expect(identify(four5)!.type).toBe('fourkind'); // 牌型本身认得出
-    let g = newGame(four);
+    let g = newGame(four, CONFIG_TWO_DECKS);
     while (g.redealSeat !== null) g = redeal(g);
     g = { ...g, mustInclude: null, turn: 0, lastPlay: null, seats: g.seats.map((s, i) => ({ ...s, hand: i === 0 ? [...four5, dc('K', 0)] : s.hand })) };
     expect(() => play(g, 0, four5)).toThrow(/五张/);
@@ -460,7 +531,7 @@ describe('四人局（两副牌）', () => {
   });
 
   it('同一张脸的两张可以一起出（两副牌的对子），出牌后只扣掉出的那两张', () => {
-    let g = newGame(four);
+    let g = newGame(four, CONFIG_TWO_DECKS);
     while (g.redealSeat !== null) g = redeal(g);
     g = { ...g, mustInclude: null, turn: 0, lastPlay: null, seats: g.seats.map((s, i) => ({ ...s, hand: i === 0 ? [dc('5s'), dc('5s', 1), dc('9c'), dc('9c', 1)] : [dc('Qc', i % 2)] })) };
     const g2 = play(g, 0, [dc('5s'), dc('5s', 1)]);
@@ -471,7 +542,7 @@ describe('四人局（两副牌）', () => {
     let redeals = 0, fourPlus = 0;
     const N = 4000;
     for (let i = 0; i < N; i++) {
-      const g = newGame(four);
+      const g = newGame(four, CONFIG_TWO_DECKS);
       if (g.redealSeat !== null) {
         redeals++;
         expect(g.seats[g.redealSeat].hand.filter((c) => rankOf(c) === 12).length).toBeGreaterThanOrEqual(6);
@@ -480,11 +551,11 @@ describe('四人局（两副牌）', () => {
     }
     expect(redeals / N).toBeLessThan(0.03);
     expect(fourPlus / N).toBeGreaterThan(0.2); // 4 张 2 其实很常见，所以不能用它重发
-    expect(configFor(3).redealTwos).toBe(4);
+    
   });
 
   it('算钱：四人局赢家收三家的钱，零和', () => {
-    let g = newGame(four);
+    let g = newGame(four, CONFIG_TWO_DECKS);
     while (g.redealSeat !== null) g = redeal(g);
     g = { ...g, mustInclude: null, turn: 0, lastPlay: null, seats: g.seats.map((s, i) => ({ ...s, hand: [[dc('As')], [dc('3c'), dc('4c'), dc('5c')], [dc('3d')], [dc('3h'), dc('4h')]][i] })) };
     g = play(g, 0, [dc('As')]);
@@ -495,7 +566,7 @@ describe('四人局（两副牌）', () => {
 
   it('机器人打 150 局四人局：只走合法的牌，零和，能打完', () => {
     for (let k = 0; k < 150; k++) {
-      let s: GameState = newGame(Array.from({ length: 4 }, (_, i) => ({ id: String(i), name: String(i), isBot: true })));
+      let s: GameState = newGame(Array.from({ length: 4 }, (_, i) => ({ id: String(i), name: String(i), isBot: true })), CONFIG_TWO_DECKS);
       let steps = 0;
       while (s.phase === 'playing') {
         if (s.redealSeat !== null) { s = redeal(s); continue; }

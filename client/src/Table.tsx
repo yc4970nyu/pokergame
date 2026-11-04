@@ -52,8 +52,8 @@ export function Table({ room }: { room: RoomView }) {
   const planRef = useRef<DealPlan | null>(null);
   const seenRound = useRef<number | null>(null);
   if (seenRound.current !== g.dealNo) {
-    const fresh = g.phase === 'playing' && !g.lastPlay && g.yourHand.length >= 17 && g.flipped !== null && g.flippedTo !== null;
-    planRef.current = fresh && !sp.off ? makeDealPlan(g.dealNo, n, g.flipped!, g.flippedTo!, k, g.decks >= 2 ? 25 : 17) : null;
+    const fresh = g.phase === 'playing' && !g.lastPlay && g.yourHand.length >= g.handSize;
+    planRef.current = fresh && !sp.off ? makeDealPlan(g.dealNo, n, g.flipped, g.flippedTo, k, g.handSize) : null;
     seenRound.current = g.dealNo;
   }
   const plan = planRef.current;
@@ -137,7 +137,7 @@ export function Table({ room }: { room: RoomView }) {
 
   const doPlay = async () => {
     if (!myTurn || sending) return;
-    if (!selCombo || !selAllowed) { sfx.error(); return toast(selCombo && g.decks >= 2 && selCombo.type === 'fourkind' ? '四人局的铁支是五张一样的加一张单牌' : selected.size ? '这不是合法的牌型' : '先选牌'); }
+    if (!selCombo || !selAllowed) { sfx.error(); return toast(selCombo && g.decks >= 2 && selCombo.type === 'fourkind' ? '两副牌的铁支是五张一样的加一张单牌' : selected.size ? '这不是合法的牌型' : '先选牌'); }
     if (!selHasMust) { sfx.error(); return toast(`第一手必须带上 ${cardLabel(must!)}`); }
     if (!selOk) {
       sfx.error();

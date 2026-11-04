@@ -129,21 +129,24 @@ export function DealSequence({ plan, me, names }: { plan: DealPlan; me: number; 
   const d = deckPoint();
   const fp = flipPoint();
   const opponents = plan.seats.filter((s) => s !== me);
+  // 4 人局没有翻牌：只发牌，不翻、不递牌
+  const flipCard = plan.flipped;
+  const flipTo = plan.flippedTo;
 
   // one soft card sound per card leaving the deck, plus the draw and the hand-over
   useEffect(() => {
     const ts: number[] = [];
     const at = (sec: number, fn: () => void) => ts.push(window.setTimeout(fn, sec * 1000));
-    at(0.25, () => sfx.flip());
+    if (flipCard !== null) at(0.25, () => sfx.flip());
     for (const seat of plan.seats) for (let j = 0; j < plan.perSeat; j++) at(dealTime(plan, seat, j), () => sfx.dealCard());
-    at(plan.give, () => sfx.thunk());
+    if (flipCard !== null) at(plan.give, () => sfx.thunk());
     return () => ts.forEach(clearTimeout);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toOwner = (() => {
-    if (plan.flippedTo === me) return null; // <Hand> takes over the card
-    const r = seatRect(plan.flippedTo);
+    if (flipTo === null || flipTo === me) return null; // <Hand> takes over the card
+    const r = seatRect(flipTo);
     return r ? { x: r.left + r.width / 2 - fp.x, y: r.top + r.height / 2 - fp.y } : null;
   })();
 
@@ -163,6 +166,7 @@ export function DealSequence({ plan, me, names }: { plan: DealPlan; me: number; 
       </motion.div>
 
       {/* the drawn card: lifts off the deck, flips face-up, waits in the middle, then goes to its owner */}
+      {flipCard !== null && flipTo !== null && (<>
       <motion.div
         className="drawn"
         style={{ left: fp.x, top: fp.y }}
@@ -185,7 +189,7 @@ export function DealSequence({ plan, me, names }: { plan: DealPlan; me: number; 
       >
         <div className="flip-3d-wrap">
           <motion.div className="flip-inner" initial={{ rotateY: 180 }} animate={{ rotateY: 0 }} transition={{ type: 'spring', stiffness: 260, damping: 24, delay: 0.3 }}>
-            <div className="flip-face"><CardFace id={plan.flipped} /></div>
+            <div className="flip-face"><CardFace id={flipCard} /></div>
             <div className="flip-face backside"><CardBack /></div>
           </motion.div>
         </div>
@@ -197,8 +201,9 @@ export function DealSequence({ plan, me, names }: { plan: DealPlan; me: number; 
         animate={{ opacity: [0, 1, 1, 0], y: [10, 0, 0, 0] }}
         transition={{ duration: plan.give + 0.3, times: [0, 0.9 / (plan.give + 0.3), plan.give / (plan.give + 0.3), 1] }}
       >
-        翻牌 {cardLabel(plan.flipped)} → {names[plan.flippedTo]}
+        翻牌 {cardLabel(flipCard)} → {names[flipTo]}
       </motion.div>
+      </>)}
 
       {/* cards dealt to each opponent, one at a time, round-robin */}
       {opponents.flatMap((seat) => {

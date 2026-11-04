@@ -2,9 +2,9 @@ import { CardId, face, fullDeck, shuffle, sortCards, rankOf, cardLabel } from '.
 import { Combo, allowedCombo, canBeat, identify, isBomb, playableCombos, COMBO_NAMES } from './combos';
 
 export interface GameConfig {
-  /** Cards each player is dealt (before the flipped card is added). 17 for 2 or 3 players. */
+  /** Cards each player is dealt (before the flipped card is added). 17 for 2 or 3 players, 13 for 4. */
   handSize: number;
-  /** 1 副牌（2、3 人）或 2 副牌（4 人）。两副牌时多出来的牌随机烧掉。 */
+  /** 1 副牌，或 2 副牌（目前没有房间用）。两副牌时多出来的牌随机烧掉。 */
   decks: 1 | 2;
   /** 有人手里的 2 达到这个数量就作废重发 */
   redealTwos: number;
@@ -13,11 +13,10 @@ export interface GameConfig {
 }
 
 export const DEFAULT_CONFIG: GameConfig = { handSize: 17, decks: 1, redealTwos: 4, losersLosePoints: true };
-/**
- * 四人局：两副牌 104 张。翻一张，每人 25 张，剩下 3 张随机烧掉（谁都不知道是哪三张）。
- * 先手拿到翻出来的那张，所以是 26 张。四张 2 在两副牌里太常见，改成拿到 6 张 2 才重发（概率约 1%，和三人局差不多少见）。
- */
-export const CONFIG_4P: GameConfig = { handSize: 25, decks: 2, redealTwos: 6, losersLosePoints: true };
+/** 四人局：一副牌 52 张，每人 13 张，没有翻牌（自由牌），其余规则和三人局一样。 */
+export const CONFIG_4P: GameConfig = { handSize: 13, decks: 1, redealTwos: 4, losersLosePoints: true };
+/** 两副牌的玩法引擎还支持（每人 25 张、翻一张、烧 3 张、铁支五张），目前没有房间使用，测试里用。 */
+export const CONFIG_TWO_DECKS: GameConfig = { handSize: 25, decks: 2, redealTwos: 6, losersLosePoints: true };
 export const configFor = (players: number): GameConfig => (players >= 4 ? CONFIG_4P : DEFAULT_CONFIG);
 
 /** How one loser's payment was worked out, for the result screen */
@@ -98,7 +97,7 @@ export interface Play {
 }
 
 export type LogEvent =
-  | { kind: 'deal'; flipped: CardId; flippedTo: number; leader: number }
+  | { kind: 'deal'; flipped: CardId | null; flippedTo: number | null; leader: number }
   | { kind: 'play'; seat: number; combo: Combo }
   | { kind: 'pass'; seat: number }
   | { kind: 'newTrick'; leader: number }
@@ -184,20 +183,21 @@ export function newGame(
 export function deal(prev: GameState, rand: () => number = Math.random, isRedeal = false): GameState {
   const n = prev.seats.length;
   const deck = shuffle(fullDeck(prev.config.decks), rand);
-  const flipped = deck[0];
-  const rest = deck.slice(1);
-  // 两副牌：发完 4×25 张后剩下的 3 张就是烧掉的，没人知道是哪三张
+  // 牌刚好发完（4 人局 4×13=52）就没有翻牌；否则翻一张。两副牌发完后剩下的就是烧掉的，没人知道是哪几张
+  const hasFlip = deck.length > n * prev.config.handSize;
+  const flipped: CardId | null = hasFlip ? deck[0] : null;
+  const rest = hasFlip ? deck.slice(1) : deck;
   const hands: CardId[][] = prev.seats.map((_, i) => rest.slice(i * prev.config.handSize, (i + 1) * prev.config.handSize));
 
   const lowestSeat = pickLeader(hands);
-  hands[lowestSeat].push(flipped);
+  if (flipped !== null) hands[lowestSeat].push(flipped);
   // 第一手必须带上先出那个人手里最小的那张脸（一般是 ♣3；两副牌里谁有哪张 ♣3 都行）
   const mustInclude = Math.min(...hands[lowestSeat].map(face));
   // 有人拿到太多的 2 → 这把作废，重新洗牌
   const redealAt = prev.config.redealTwos;
   const fourTwos = hands.findIndex((h) => h.filter((c) => rankOf(c) === RANK_TWO).length >= redealAt);
   const redealSeat = fourTwos >= 0 ? fourTwos : null;
-  const log: LogEvent[] = [{ kind: 'deal', flipped, flippedTo: lowestSeat, leader: lowestSeat }];
+  const log: LogEvent[] = [{ kind: 'deal', flipped, flippedTo: flipped === null ? null : lowestSeat, leader: lowestSeat }];
   if (redealSeat !== null) log.push({ kind: 'fourTwos', seat: redealSeat });
 
   return {
@@ -209,7 +209,7 @@ export function deal(prev: GameState, rand: () => number = Math.random, isRedeal
     lastPlay: null,
     passed: Array(n).fill(false),
     flipped,
-    flippedTo: lowestSeat,
+    flippedTo: flipped === null ? null : lowestSeat,
     winner: null,
     lastDeltas: null,
     lastSettlement: null,
@@ -279,7 +279,7 @@ export function validatePlay(state: GameState, seat: number, cards: CardId[]): C
   const combo = identify(cards);
   if (!combo) throw new GameError('不是合法的牌型');
   if (!allowedCombo(combo.type, state.config.decks))
-    throw new GameError(state.config.decks >= 2 ? '四人局的铁支是五张一样的加一张单牌' : '这个牌型这局不能出');
+    throw new GameError(state.config.decks >= 2 ? '两副牌的铁支是五张一样的加一张单牌' : '这个牌型这局不能出');
   const prev = state.lastPlay?.combo ?? null;
   if (!canBeat(combo, prev)) {
     if (prev && prev.type !== combo.type) throw new GameError(`这一轮要出${COMBO_NAMES[prev.type]}（或炸弹）`);

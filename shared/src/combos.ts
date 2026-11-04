@@ -22,7 +22,7 @@ export const COMBO_NAMES: Record<ComboType, string> = {
 export const isBomb = (t: ComboType) => t === 'fourkind' || t === 'fivekind' || t === 'straightflush';
 
 /**
- * 两副牌（4 人局）里，铁支是「五张一样的 + 一张单牌」（共 6 张）；四张一样的 + 一张不再是铁支。
+ * 两副牌玩法里，铁支是「五张一样的 + 一张单牌」（共 6 张）；四张一样的 + 一张不再是铁支。
  * 一副牌（2、3 人局）里，铁支还是「四张一样的 + 一张单牌」。
  */
 export const allowedCombo = (type: ComboType, decks: number) => (decks >= 2 ? type !== 'fourkind' : type !== 'fivekind');
