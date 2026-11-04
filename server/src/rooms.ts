@@ -25,8 +25,6 @@ export interface Room {
 }
 
 const BOT_NAMES = ['小黑', '阿财', '老K', '雀神', '赌圣'];
-/** A disconnected human is auto-played after this long on their turn */
-export const AUTOPLAY_AFTER_MS = 20_000;
 /** Clients animate the deal for ~5 s; nobody automated moves before it finishes */
 export const DEAL_HOLD_MS = 6_000;
 /** 四张 2：发完牌后公示多久再重新洗牌 */
@@ -229,8 +227,8 @@ export class RoomManager {
     }
     const p = room.players[g.turn];
     let delay: number | null = null;
+    // 只有机器人会自动出牌。真人（哪怕掉线了）永远等他自己点「出牌」或「不要」，绝不替他决定。
     if (p.isBot) delay = 650 + Math.random() * 600;
-    else if (p.disconnectedAt) delay = Math.max(500, AUTOPLAY_AFTER_MS - (Date.now() - p.disconnectedAt));
     if (delay === null) return;
     // let everyone's deal animation finish before the first automated move
     delay = Math.max(delay, room.dealtAt + DEAL_HOLD_MS - Date.now());
@@ -239,7 +237,7 @@ export class RoomManager {
       room.botTimer = null;
       if (!room.game || room.game.seq !== seq) return;
       const cur = room.players[room.game.turn];
-      if (!cur.isBot && !cur.disconnectedAt) return;
+      if (!cur.isBot) return;
       const move = chooseBotMove(room.game, room.game.turn);
       room.game = move.type === 'play' ? play(room.game, room.game.turn, move.cards) : pass(room.game, room.game.turn);
       room.lastEvent = describe(room, room.game.log);
@@ -305,7 +303,7 @@ export class RoomManager {
     this.rooms.delete(room.code);
   }
 
-  private touch(room: Room) {
+  touch(room: Room) {
     room.updatedAt = Date.now();
     this.scheduleBots(room);
     this.onChange(room);
