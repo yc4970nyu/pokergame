@@ -4,3 +4,5 @@ client/dist
 *.log
 shots
 bgm
+data
+.env

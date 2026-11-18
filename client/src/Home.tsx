@@ -1,12 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { api, saveName, savedName, toast } from './net';
 import { CardFace } from './Card';
 import { sfx } from './sound';
 import { useSettings, springs } from './settings';
+import { refreshAccount, useAccount } from './account';
+import { navigate } from './router';
+import { Avatar, Money } from './ui';
+import { SignIn } from './SignIn';
+import { CreateGroupSheet } from './Group';
 
 const TWOS = [48, 49, 50, 51]; // ♣2 ♦2 ♥2 ♠2
-type Mode = null | 'create' | 'join' | 'practice';
+type Mode = null | 'create' | 'join' | 'practice' | 'signin';
 
 export function Home() {
   const urlCode = new URLSearchParams(location.search).get('room')?.toUpperCase() ?? '';
@@ -17,8 +22,13 @@ export function Home() {
   const [busy, setBusy] = useState(false);
   const { speed } = useSettings();
   const sp = springs(speed);
+  const { user, groups, loaded } = useAccount();
+  const [newGroup, setNewGroup] = useState(false);
+  useEffect(() => { if (user) refreshAccount(); }, [user?.id]);
+  useEffect(() => { if (user && mode === 'signin') setMode(null); }, [user, mode]);
 
   const needName = () => {
+    if (user) { sfx.unlock(); return user.name; }
     const n = name.trim();
     if (!n) { toast('先给自己起个名字'); return null; }
     saveName(n);
@@ -51,7 +61,17 @@ export function Home() {
   const submit = mode === 'create' ? create : mode === 'join' ? join : practice;
 
   return (
-    <main className="home">
+    <main className={`home ${user ? 'signed' : ''}`}>
+      <div className="home-top">
+        {user ? (
+          <button className="account-chip" onClick={() => navigate('/me')} aria-label="我的主页">
+            <Avatar name={user.name} avatar={user.avatar} picture={user.picture} size={28} />
+            <span>{user.name}</span>
+          </button>
+        ) : loaded ? (
+          <button className="account-chip" onClick={() => pick('signin')}>登录</button>
+        ) : null}
+      </div>
       <section className="hero">
         <HeroFan sp={sp} still={speed === 'off'} />
         <h1 className="title">大老二</h1>
@@ -69,7 +89,36 @@ export function Home() {
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.22 }}
             >
-              <button className="choice primary" onClick={() => pick('create')}>
+              {user && (
+                <div className="home-groups">
+                  <div className="hg-head"><span>我的小组</span><button type="button" onClick={() => setNewGroup(true)}>＋ 新建</button></div>
+                  {groups.length === 0 ? (
+                    <button className="choice primary" onClick={() => setNewGroup(true)}>
+                      <span className="choice-t">建一个小组</span>
+                      <span className="choice-s">固定的牌友圈：不用房间号，输赢自动记账</span>
+                    </button>
+                  ) : (
+                    groups.map((g) => (
+                      <button key={g.id} className="choice group-choice" onClick={() => { sfx.pickup(); navigate(`/g/${g.id}`); }}>
+                        <span className="g-icon">{g.icon}</span>
+                        <span className="g-text">
+                          <span className="choice-t">{g.name}</span>
+                          <span className="choice-s">{g.members} 人{g.tables > 0 && <b className="live-dot"> · {g.tables} 桌在打</b>}</span>
+                        </span>
+                        <Money v={g.balance} />
+                      </button>
+                    ))
+                  )}
+                  <div className="hg-head sub"><span>临时开桌</span></div>
+                </div>
+              )}
+              {!user && loaded && (
+                <button className="choice signin-choice" onClick={() => pick('signin')}>
+                  <span className="choice-t">登录 / 注册</span>
+                  <span className="choice-s">建小组、自动记账、看自己的战绩</span>
+                </button>
+              )}
+              <button className={`choice ${user ? '' : 'primary'}`} onClick={() => pick('create')}>
                 <span className="choice-t">开一桌</span>
                 <span className="choice-s">开个房间，把房间号发给朋友</span>
               </button>
@@ -81,6 +130,23 @@ export function Home() {
                 <span className="choice-t">先练一局</span>
                 <span className="choice-s">和机器人打，随时退出</span>
               </button>
+            </motion.div>
+          ) : mode === 'signin' ? (
+            <motion.div
+              key="signin"
+              className="sheet"
+              initial={{ opacity: 0, y: 14, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: 0.98 }}
+              transition={sp.card}
+            >
+              <header className="sheet-head">
+                <button type="button" className="sheet-back" onClick={() => setMode(null)} aria-label="返回">
+                  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                </button>
+                <h2>登录</h2>
+              </header>
+              <SignIn onDone={() => setMode(null)} />
             </motion.div>
           ) : (
             <motion.form
@@ -99,20 +165,22 @@ export function Home() {
                 <h2>{mode === 'create' ? '开一桌' : mode === 'join' ? '加入朋友' : '先练一局'}</h2>
               </header>
 
-              <label className="field">
-                <span>你的名字</span>
-                <input
-                  value={name}
-                  maxLength={12}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="比如：Louis"
-                  autoComplete="nickname"
-                  autoFocus={!name}
-                />
-              </label>
+              {!user && loaded && (
+                <label className="field">
+                  <span>你的名字</span>
+                  <input
+                    value={name}
+                    maxLength={12}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="比如：Louis"
+                    autoComplete="nickname"
+                    autoFocus={!name}
+                  />
+                </label>
+              )}
 
               {mode === 'join' ? (
-                <CodeBoxes code={code} setCode={setCode} autoFocus={!!name} />
+                <CodeBoxes code={code} setCode={setCode} autoFocus={!!name || !!user} />
               ) : (
                 <div className="field">
                   <span>几个人</span>
@@ -133,6 +201,7 @@ export function Home() {
           )}
         </AnimatePresence>
       </div>
+      <AnimatePresence>{newGroup && <CreateGroupSheet onClose={() => setNewGroup(false)} />}</AnimatePresence>
     </main>
   );
 }

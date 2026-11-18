@@ -2,6 +2,8 @@ import {
   GameState, GameError, newGame, play, pass, nextRound, endMatch, newMatch, redeal, chooseBotMove, LogEvent,
   RoomView, CardId, COMBO_NAMES,
 } from '../../shared/src/index';
+import type { TableSummary } from '../../shared/src/ledger';
+import crypto from 'node:crypto';
 
 export interface Player {
   id: string; // stable token stored on the client
@@ -9,7 +11,24 @@ export interface Player {
   isBot: boolean;
   socketId: string | null;
   disconnectedAt: number | null;
+  /** 登录的玩家；游客为 null */
+  userId: string | null;
+  /** emoji 或头像图片地址 */
+  avatar: string | null;
 }
+
+export interface GroupRef { id: string; name: string; icon: string }
+
+export interface RoomHooks {
+  /** 一局刚打完（还没开下一局） */
+  onRoundOver?: (room: Room) => void;
+  /** 一场比赛结束（点了结束比赛，或者房间关了） */
+  onMatchEnd?: (matchId: string) => void;
+  /** 小组的牌桌有变化（开桌、有人进出、开打、关桌） */
+  onTables?: (groupId: string) => void;
+}
+
+export interface Identity { userId: string | null; avatar?: string | null }
 
 export interface Room {
   code: string;
@@ -22,6 +41,10 @@ export interface Room {
   updatedAt: number;
   /** when the current round was dealt */
   dealtAt: number;
+  /** 小组牌桌：不用房间号进、不能加机器人、输赢记进小组账本 */
+  group: GroupRef | null;
+  /** 这一场比赛的 id（开始游戏 / 再来一场时换新的） */
+  matchId: string | null;
 }
 
 const BOT_NAMES = ['小黑', '阿财', '老K', '雀神', '赌圣'];
@@ -37,7 +60,7 @@ export class RoomManager {
   /** player token → room code */
   byPlayer = new Map<string, string>();
 
-  constructor(private onChange: (room: Room) => void) {}
+  constructor(private onChange: (room: Room) => void, private hooks: RoomHooks = {}) {}
 
   private newCode(): string {
     for (;;) {
@@ -51,33 +74,38 @@ export class RoomManager {
     return code ? this.rooms.get(code) ?? null : null;
   }
 
-  create(playerId: string, name: string, socketId: string, maxPlayers: 2 | 3 | 4): Room {
+  create(playerId: string, name: string, socketId: string, maxPlayers: 2 | 3 | 4, who: Identity = { userId: null }, group: GroupRef | null = null): Room {
+    if (group && !who.userId) throw new GameError('小组牌桌要先登录');
     this.leave(playerId);
     const room: Room = {
       code: this.newCode(),
       hostId: playerId,
       maxPlayers,
-      players: [{ id: playerId, name: clean(name), isBot: false, socketId, disconnectedAt: null }],
+      players: [{ id: playerId, name: clean(name), isBot: false, socketId, disconnectedAt: null, userId: who.userId, avatar: who.avatar ?? null }],
       game: null,
       lastEvent: null,
       botTimer: null,
       updatedAt: Date.now(),
       dealtAt: 0,
+      group,
+      matchId: null,
     };
     this.rooms.set(room.code, room);
     this.byPlayer.set(playerId, room.code);
     return room;
   }
 
-  join(code: string, playerId: string, name: string, socketId: string): Room {
+  join(code: string, playerId: string, name: string, socketId: string, who: Identity = { userId: null }): Room {
     const room = this.rooms.get(code.toUpperCase().trim());
     if (!room) throw new GameError('房间不存在');
+    if (room.group && !who.userId) throw new GameError('这是小组牌桌，要先登录');
     const existing = room.players.find((p) => p.id === playerId);
     if (existing) {
       // reconnect
       existing.socketId = socketId;
       existing.disconnectedAt = null;
-      if (name) existing.name = clean(name);
+      if (name && !room.game) existing.name = clean(name);
+      if (who.avatar !== undefined) existing.avatar = who.avatar ?? null;
       this.byPlayer.set(playerId, room.code);
       this.touch(room);
       return room;
@@ -85,7 +113,7 @@ export class RoomManager {
     if (room.game) throw new GameError('游戏已经开始了');
     if (room.players.length >= room.maxPlayers) throw new GameError('房间已满');
     this.leave(playerId);
-    room.players.push({ id: playerId, name: clean(name), isBot: false, socketId, disconnectedAt: null });
+    room.players.push({ id: playerId, name: clean(name), isBot: false, socketId, disconnectedAt: null, userId: who.userId, avatar: who.avatar ?? null });
     this.byPlayer.set(playerId, room.code);
     this.touch(room);
     return room;
@@ -94,9 +122,17 @@ export class RoomManager {
   leave(playerId: string) {
     const room = this.roomOf(playerId);
     if (!room) return;
-    this.byPlayer.delete(playerId);
     const p = room.players.find((x) => x.id === playerId);
-    if (!p) return;
+    if (!p) { this.byPlayer.delete(playerId); return; }
+    if (room.group && room.game) {
+      // 小组牌桌不托管：座位留着，回来接着打（真人永远不会被代打）。比赛已经结束、大家都走了就关桌。
+      p.socketId = null;
+      p.disconnectedAt = Date.now();
+      if (room.game.phase === 'matchOver' && !room.players.some((x) => x.socketId)) return this.destroy(room);
+      this.touch(room);
+      return;
+    }
+    this.byPlayer.delete(playerId);
     if (room.game) {
       // mid-game: a bot takes over the seat
       p.isBot = true;
@@ -119,6 +155,8 @@ export class RoomManager {
       if (p) {
         p.socketId = null;
         p.disconnectedAt = Date.now();
+        // 小组牌桌：比赛已经结束、人都走了，就把桌子收掉
+        if (room.group && room.game?.phase === 'matchOver' && !room.players.some((x) => x.socketId)) { this.destroy(room); continue; }
         this.touch(room);
       }
     }
@@ -126,11 +164,12 @@ export class RoomManager {
 
   addBot(playerId: string) {
     const room = this.requireHost(playerId);
+    if (room.group) throw new GameError('小组牌桌不能加机器人');
     if (room.game) throw new GameError('游戏已经开始了');
     if (room.players.length >= room.maxPlayers) throw new GameError('房间已满');
     const used = new Set(room.players.map((p) => p.name));
     const name = BOT_NAMES.find((n) => !used.has(n)) ?? `机器人${room.players.length}`;
-    room.players.push({ id: `bot-${Math.random().toString(36).slice(2, 8)}`, name, isBot: true, socketId: null, disconnectedAt: null });
+    room.players.push({ id: `bot-${Math.random().toString(36).slice(2, 8)}`, name, isBot: true, socketId: null, disconnectedAt: null, userId: null, avatar: null });
     this.touch(room);
   }
 
@@ -156,6 +195,7 @@ export class RoomManager {
     if (room.game) throw new GameError('游戏已经开始了');
     if (room.players.length < 2) throw new GameError('至少需要 2 名玩家（可以加机器人）');
     room.game = newGame(room.players.map((p) => ({ id: p.id, name: p.name, isBot: p.isBot })));
+    room.matchId = crypto.randomUUID();
     room.dealtAt = Date.now();
     room.lastEvent = describe(room, room.game.log);
     this.touch(room);
@@ -165,6 +205,7 @@ export class RoomManager {
     const { room, seat } = this.requireSeat(playerId);
     room.game = play(room.game!, seat, cards);
     room.lastEvent = describe(room, room.game.log);
+    if (room.game.phase === 'roundOver') this.hooks.onRoundOver?.(room);
     this.touch(room);
   }
 
@@ -191,6 +232,7 @@ export class RoomManager {
     if (!room?.game) throw new GameError('没有进行中的游戏');
     if (room.game.phase === 'matchOver') return;
     room.game = endMatch(room.game);
+    if (room.matchId) this.hooks.onMatchEnd?.(room.matchId);
     room.lastEvent = '比赛结束';
     this.touch(room);
   }
@@ -199,7 +241,9 @@ export class RoomManager {
   newMatch(playerId: string) {
     const room = this.roomOf(playerId);
     if (!room?.game) throw new GameError('没有进行中的游戏');
+    if (room.matchId && room.game.phase !== 'matchOver') this.hooks.onMatchEnd?.(room.matchId);
     room.game = newMatch(room.game);
+    room.matchId = crypto.randomUUID();
     room.dealtAt = Date.now();
     room.lastEvent = describe(room, room.game.log);
     this.touch(room);
@@ -241,6 +285,7 @@ export class RoomManager {
       const move = chooseBotMove(room.game, room.game.turn);
       room.game = move.type === 'play' ? play(room.game, room.game.turn, move.cards) : pass(room.game, room.game.turn);
       room.lastEvent = describe(room, room.game.log);
+      if (room.game.phase === 'roundOver') this.hooks.onRoundOver?.(room);
       this.touch(room);
     }, delay);
   }
@@ -253,11 +298,14 @@ export class RoomManager {
       hostId: room.hostId,
       maxPlayers: room.maxPlayers,
       you: playerId,
+      group: room.group,
       players: room.players.map((p, i) => ({
         id: p.id,
         name: p.name,
         isBot: p.isBot,
         connected: p.isBot || !!p.socketId,
+        userId: p.userId,
+        avatar: p.avatar,
         seat: i,
         cardCount: g ? g.seats[i].hand.length : 0,
         score: g ? g.seats[i].score : 0,
@@ -299,8 +347,32 @@ export class RoomManager {
     }
   }
 
+  /** 小组现在开着的牌桌 */
+  tablesFor(groupId: string): TableSummary[] {
+    const out: TableSummary[] = [];
+    for (const r of this.rooms.values()) {
+      if (r.group?.id !== groupId) continue;
+      out.push({
+        code: r.code,
+        maxPlayers: r.maxPlayers,
+        phase: !r.game ? 'lobby' : r.game.phase === 'matchOver' ? 'over' : 'playing',
+        round: r.game?.round ?? 0,
+        players: r.players.map((p) => ({ userId: p.userId ?? '', name: p.name, connected: !!p.socketId })),
+      });
+    }
+    return out;
+  }
+
+  /** 这场比赛还在某张桌上进行吗 */
+  isLiveMatch(matchId: string) {
+    for (const r of this.rooms.values()) if (r.matchId === matchId && r.game?.phase !== 'matchOver') return true;
+    return false;
+  }
+
   private destroy(room: Room) {
     if (room.botTimer) clearTimeout(room.botTimer);
+    if (room.matchId && room.game?.phase !== 'matchOver') this.hooks.onMatchEnd?.(room.matchId);
+    if (room.group) queueMicrotask(() => this.hooks.onTables?.(room.group!.id));
     for (const p of room.players) if (this.byPlayer.get(p.id) === room.code) this.byPlayer.delete(p.id);
     this.rooms.delete(room.code);
   }
@@ -309,6 +381,7 @@ export class RoomManager {
     room.updatedAt = Date.now();
     this.scheduleBots(room);
     this.onChange(room);
+    if (room.group) this.hooks.onTables?.(room.group.id);
   }
 
   private requireHost(playerId: string): Room {

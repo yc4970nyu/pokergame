@@ -189,7 +189,7 @@ export function Scoreboard({ room, sp }: { room: RoomView; sp: Springs }) {
         )}
 
         <div className="ms-actions">
-          <button className="ms-btn secondary" onClick={api.leave}>离开房间</button>
+          <button className="ms-btn secondary" onClick={api.leave}>{room.group ? '回到小组' : '离开房间'}</button>
           <button className="ms-btn primary" onClick={api.newMatch}>再来一场</button>
         </div>
       </motion.div>

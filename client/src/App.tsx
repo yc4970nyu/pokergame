@@ -5,9 +5,14 @@ import { Home } from './Home';
 import { Lobby } from './Lobby';
 import { Table } from './Table';
 import { CardDefs } from './Card';
+import { useRoute } from './router';
+import { GroupPage, JoinInvite } from './Group';
+import { Profile } from './Profile';
+import { Privacy } from './Privacy';
 
 export function App() {
   const { room, connected, toast } = useNet();
+  const route = useRoute();
 
   useEffect(() => {
     // keep the viewport height honest on mobile browsers
@@ -20,7 +25,12 @@ export function App() {
   return (
     <div className="felt">
       <CardDefs />
-      {!room ? <Home /> : !room.game ? <Lobby room={room} /> : <Table room={room} />}
+      {room ? (!room.game ? <Lobby room={room} /> : <Table room={room} />)
+        : route.name === 'group' ? <GroupPage key={route.id} id={route.id} />
+        : route.name === 'join' ? <JoinInvite code={route.code} />
+        : route.name === 'me' ? <Profile />
+        : route.name === 'privacy' ? <Privacy />
+        : <Home />}
 
       {!connected && <div className="offline">正在连接服务器…</div>}
 

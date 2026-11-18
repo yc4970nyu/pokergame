@@ -1,6 +1,7 @@
 import type { CardId } from './cards';
 import type { Combo } from './combos';
 import type { Settlement, RoundRecord } from './game';
+import type { TableSummary } from './ledger';
 
 /** What one client is allowed to see about a room. Other players' hands are hidden. */
 export interface RoomView {
@@ -8,6 +9,8 @@ export interface RoomView {
   hostId: string;
   maxPlayers: 2 | 3 | 4;
   you: string; // your player id
+  /** 小组牌桌（不用房间号、不能加机器人、输赢记账）；普通房间为 null */
+  group: { id: string; name: string; icon: string } | null;
   players: PlayerView[];
   game: GameView | null;
 }
@@ -20,6 +23,10 @@ export interface PlayerView {
   seat: number;
   cardCount: number;
   score: number;
+  /** 登录玩家的账号 id；游客和机器人为 null */
+  userId: string | null;
+  /** emoji 或头像图片地址 */
+  avatar: string | null;
 }
 
 export interface GameView {
@@ -69,12 +76,21 @@ export interface ClientToServer {
   'game:end': () => void;
   /** 清零积分，开一场新比赛 */
   'game:newMatch': () => void;
+  /** 小组：在小组里开一张新桌（不用房间号，组员在小组页直接点进来） */
+  'group:createTable': (p: { groupId: string; maxPlayers: 2 | 3 | 4 }, ack: (r: Ack) => void) => void;
+  /** 打开小组页时订阅这个小组的牌桌和账本变化 */
+  'group:watch': (p: { groupId: string }) => void;
+  'group:unwatch': (p: { groupId: string }) => void;
 }
 
 export interface ServerToClient {
   'room:state': (v: RoomView) => void;
   'room:closed': (reason: string) => void;
   toast: (msg: string) => void;
+  /** 小组现在开着的牌桌 */
+  'group:tables': (p: { groupId: string; tables: TableSummary[] }) => void;
+  /** 小组的账本 / 成员变了，重新拉一下 */
+  'group:changed': (p: { groupId: string }) => void;
 }
 
 export type Ack = { ok: true; code?: string } | { ok: false; error: string };

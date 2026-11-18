@@ -11,3 +11,9 @@ services:
     envVars:
       - key: NODE_VERSION
         value: "22"
+      # 账号和小组账本要存进 Postgres（Neon / Supabase 免费档都行），不然重新部署会清空
+      - key: DATABASE_URL
+        sync: false
+      # Google 登录用的 OAuth Client ID（可选，不填就只有用户名登录）
+      - key: GOOGLE_CLIENT_ID
+        sync: false

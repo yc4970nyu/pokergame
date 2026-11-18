@@ -212,12 +212,12 @@ export function Table({ room }: { room: RoomView }) {
           </div>
         </div>
         <div className="topbar-right">
-          <span className="chip num" title="房间号">{room.code}</span>
+          {room.group ? <span className="chip group-chip" title={room.group.name}>{room.group.icon} {room.group.name}</span> : <span className="chip num" title="房间号">{room.code}</span>}
           <button className="icon-btn" onClick={() => setMenu((m) => !m)} aria-label="设置" aria-expanded={menu}>
             <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden><path fill="currentColor" d="M4 7h10.2a3 3 0 0 0 5.6 0H20V5h-.2a3 3 0 0 0-5.6 0H4v2Zm13-2a1 1 0 1 1 0 2 1 1 0 0 1 0-2ZM4 13h.2a3 3 0 0 0 5.6 0H20v-2H9.8a3 3 0 0 0-5.6 0H4v2Zm3-2a1 1 0 1 1 0 2 1 1 0 0 1 0-2Zm-3 8h10.2a3 3 0 0 0 5.6 0H20v-2h-.2a3 3 0 0 0-5.6 0H4v2Zm13-2a1 1 0 1 1 0 2 1 1 0 0 1 0-2Z" /></svg>
           </button>
         </div>
-        <AnimatePresence>{menu && <SettingsMenu speed={speed} onClose={() => setMenu(false)} onEnd={() => setConfirmEnd(true)} />}</AnimatePresence>
+        <AnimatePresence>{menu && <SettingsMenu speed={speed} group={!!room.group} onClose={() => setMenu(false)} onEnd={() => setConfirmEnd(true)} />}</AnimatePresence>
       </header>
 
       {/* ---------- arena ---------- */}
@@ -508,6 +508,7 @@ function RoundOver({ room, sp, speed, k, onEnd }: { room: RoomView; sp: Springs;
       <motion.div className="result panel" initial={{ y: 60, scale: 0.94, opacity: 0 }} animate={{ y: 0, scale: 1, opacity: 1 }} transition={{ ...sp.card, delay }}>
         <h2 className="result-title">{iWon ? '你赢了这局' : `${winner?.name} 先出完了`}</h2>
         {st?.tailTwo && <div className="tail-two">尾二！全场翻倍</div>}
+        {room.group && <p className="booked">已记入「{room.group.name}」的账本</p>}
         <ul className="result-list">
           {room.players
             .slice()
@@ -540,7 +541,7 @@ function RoundOver({ room, sp, speed, k, onEnd }: { room: RoomView; sp: Springs;
   );
 }
 
-function SettingsMenu({ speed, onClose, onEnd }: { speed: Speed; onClose: () => void; onEnd: () => void }) {
+function SettingsMenu({ speed, onClose, onEnd, group }: { speed: Speed; onClose: () => void; onEnd: () => void; group: boolean }) {
   const { sound } = useSettings();
   return (
     <motion.div className="menu panel" initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}>
@@ -564,7 +565,7 @@ function SettingsMenu({ speed, onClose, onEnd }: { speed: Speed; onClose: () => 
       <p className="menu-keys">理牌：按住一张牌拖到想要的位置（电脑上直接拖）。键盘：Enter 出牌，P 不要，H 提示，Shift+←/→ 移动牌。</p>
       <div className="menu-row">
         <button className="btn small ghost" onClick={() => { onClose(); onEnd(); }}>结束比赛</button>
-        <button className="btn small ghost" onClick={() => { if (confirm('离开后由机器人替你托管，确定吗？')) api.leave(); }}>离开房间</button>
+        <button className="btn small ghost" onClick={() => { if (confirm(group ? '座位会保留，回来可以接着打（没人会替你出牌）。确定离开吗？' : '离开后由机器人替你托管，确定吗？')) api.leave(); }}>离开房间</button>
       </div>
       <div className="menu-row">
         <button className="btn small" onClick={onClose}>关闭</button>

@@ -1,8 +1,10 @@
 import type { RoomView } from '../../shared/src/protocol';
 import { api, toast } from './net';
+import { Avatar } from './ui';
 
 export function Lobby({ room }: { room: RoomView }) {
   const isHost = room.hostId === room.you;
+  const group = room.group;
   const seats = Array.from({ length: room.maxPlayers }, (_, i) => room.players[i] ?? null);
   const link = `${location.origin}/?room=${room.code}`;
 
@@ -17,11 +19,18 @@ export function Lobby({ room }: { room: RoomView }) {
     <main className="lobby">
       <header className="lobby-head">
         <button className="btn small ghost" onClick={api.leave}>离开</button>
-        <div className="room-code">
-          <span>房间号</span>
-          <strong className="num">{room.code}</strong>
-        </div>
-        <button className="btn small" onClick={share}>邀请朋友</button>
+        {group ? (
+          <div className="room-code group-code">
+            <span>小组牌桌</span>
+            <strong>{group.icon} {group.name}</strong>
+          </div>
+        ) : (
+          <div className="room-code">
+            <span>房间号</span>
+            <strong className="num">{room.code}</strong>
+          </div>
+        )}
+        {group ? <span className="head-spacer" /> : <button className="btn small" onClick={share}>邀请朋友</button>}
       </header>
 
       <section className="seats">
@@ -29,7 +38,7 @@ export function Lobby({ room }: { room: RoomView }) {
           <div key={i} className={`seat-slot ${p ? 'filled' : ''}`}>
             {p ? (
               <>
-                <div className="avatar">{p.name.slice(0, 1)}</div>
+                <Avatar name={p.name} avatar={p.avatar} />
                 <div className="seat-name">
                   {p.name}
                   {p.id === room.hostId && <em>房主</em>}
@@ -40,10 +49,10 @@ export function Lobby({ room }: { room: RoomView }) {
                   <button className="kick" onClick={() => api.kick(p.id)} aria-label={`移出 ${p.name}`}>×</button>
                 )}
               </>
-            ) : isHost ? (
+            ) : isHost && !group ? (
               <button className="add-bot" onClick={api.addBot}>＋ 加机器人</button>
             ) : (
-              <span className="waiting">等待加入…</span>
+              <span className="waiting">{group ? '等组员从小组页加入…' : '等待加入…'}</span>
             )}
           </div>
         ))}
@@ -62,7 +71,10 @@ export function Lobby({ room }: { room: RoomView }) {
             开始游戏
           </button>
           {room.maxPlayers === 4 && <p className="hint">四人局：一副牌，每人 13 张，没有翻牌，其余规则和三人局一样。不满四人开始，就按三人局打。</p>}
-          {room.players.length < 2 && <p className="hint">至少 2 个人才能开始。发房间号给朋友，或者加个机器人。</p>}
+          {room.players.length < 2 && (
+            <p className="hint">{group ? '至少 2 个人才能开始。组员打开小组页就能看到这张桌，点「加入」就坐进来。' : '至少 2 个人才能开始。发房间号给朋友，或者加个机器人。'}</p>
+          )}
+          {group && <p className="hint">小组牌桌不能加机器人，每局输赢自动记进「{group.name}」的账本。</p>}
         </div>
       ) : (
         <p className="hint center">等房主开始游戏</p>

@@ -2,6 +2,7 @@ import { io, Socket } from 'socket.io-client';
 import { useSyncExternalStore } from 'react';
 import type { ClientToServer, ServerToClient, RoomView, Ack } from '../../shared/src/protocol';
 import { voice } from './voice';
+import { navigate } from './router';
 
 const store = {
   get(k: string) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -70,10 +71,15 @@ export const api = {
   join: (code: string, name: string) =>
     withAck((cb) => socket.emit('room:join', { code, name, token }, cb)),
   leave: () => {
+    const group = state.room?.group;
     socket.emit('room:leave');
     store.set('dld.room', null);
     set({ room: null });
+    // 小组牌桌：回到小组页
+    if (group) navigate(`/g/${group.id}`);
   },
+  createGroupTable: (groupId: string, maxPlayers: 2 | 3 | 4) =>
+    withAck((cb) => socket.emit('group:createTable', { groupId, maxPlayers }, cb)),
   addBot: () => socket.emit('room:addBot'),
   kick: (playerId: string) => socket.emit('room:kick', { playerId }),
   setMax: (maxPlayers: 2 | 3 | 4) => socket.emit('room:setMax', { maxPlayers }),

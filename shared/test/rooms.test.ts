@@ -55,3 +55,48 @@ describe('真人永远不会被自动跳过', () => {
     expect(room.game!.seq).toBeGreaterThan(seq);
   });
 });
+
+describe('小组牌桌', () => {
+  const grp = { id: 'g1', name: '周五牌局', icon: '🎲' };
+  const make = () => {
+    const rounds: string[] = [];
+    const rm = new RoomManager(() => {}, { onRoundOver: (r) => rounds.push(r.matchId!) });
+    const room = rm.create('u:a', 'A', 'sa', 2, { userId: 'a' }, grp);
+    rm.join(room.code, 'u:b', 'B', 'sb', { userId: 'b' });
+    return { rm, room, rounds };
+  };
+
+  it('不能加机器人，游客进不来', () => {
+    const { rm, room } = make();
+    expect(() => rm.addBot('u:a')).toThrow('机器人');
+    expect(() => rm.join(room.code, 'guest', 'G', 'sg')).toThrow('登录');
+    expect(() => rm.create('guest', 'G', 'sg', 2, { userId: null }, grp)).toThrow('登录');
+  });
+
+  it('打到一半离开：座位保留、不托管，回来接着打', () => {
+    vi.useFakeTimers();
+    const { rm, room } = make();
+    rm.start('u:a');
+    rm.leave('u:b');
+    expect(room.players[1]).toMatchObject({ id: 'u:b', isBot: false, socketId: null });
+    vi.advanceTimersByTime(60_000);
+    rm.join(room.code, 'u:b', '', 'sb2', { userId: 'b' });
+    expect(room.players[1].socketId).toBe('sb2');
+    expect(rm.tablesFor('g1')).toHaveLength(1);
+  });
+
+  it('一局打完通知记账；比赛结束、人都走了就收桌', () => {
+    const { rm, room, rounds } = make();
+    rm.start('u:a');
+    const g = room.game!;
+    // 让 A 只剩一张牌，轮到 A 首攻
+    room.game = { ...g, redealSeat: null, mustInclude: null, turn: 0, lastPlay: null, seats: g.seats.map((s, i) => ({ ...s, hand: i === 0 ? [51] : s.hand })) };
+    rm.play('u:a', [51]);
+    expect(room.game!.phase).toBe('roundOver');
+    expect(rounds).toEqual([room.matchId]);
+    rm.end('u:a');
+    rm.leave('u:a');
+    rm.leave('u:b');
+    expect(rm.tablesFor('g1')).toHaveLength(0);
+  });
+});
